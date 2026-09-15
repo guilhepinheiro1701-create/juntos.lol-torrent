@@ -1,0 +1,11 @@
+{
+  "name": "juntos-lol-torrentio",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Plugin de fontes do Torrentio para o juntos.lol",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --experimental-vm-modules --test \"test/*.test.js\""
+  }
+}
