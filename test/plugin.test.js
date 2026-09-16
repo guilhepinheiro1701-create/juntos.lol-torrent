@@ -12,6 +12,9 @@ const PLUGIN = fileURLToPath(new URL('../plugin.js', import.meta.url))
 const BRAZUCA = '94c8cb9f702d-brazuca-torrents.baby-beamup.club'
 const TORRENTIO = 'torrentio.strem.fun'
 const ELFHOSTED = 'torrentio.elfhosted.com'
+const COMET = 'comet.elfhosted.com'
+const COMET_MIRROR = 'comet.feels.legal'
+const MEDIAFUSION = 'mediafusion.elfhosted.com'
 
 const MOVIE = { type: 'movie', id: 'tt0111161' }
 const EPISODE = { type: 'series', id: 'tt0903747', season: 5, episode: 14 }
@@ -96,17 +99,19 @@ describe('the box it runs in', () => {
 })
 
 describe('resolving a title', () => {
-  it('asks both providers and hands every stream back', async () => {
+  it('asks every provider and hands every stream back', async () => {
     const { plugin } = await load()
     const { api, calls } = makeApi(plugin.manifest.hosts, answers({
       [BRAZUCA]: body([FROM_BRAZUCA]),
       [TORRENTIO]: body([FROM_TORRENTIO]),
+      [COMET]: body([torrent('c')]),
+      [MEDIAFUSION]: body([torrent('d')]),
     }))
     const streams = plain(await plugin.streams(MOVIE, api))
 
-    assert.deepEqual(streams, [FROM_BRAZUCA, FROM_TORRENTIO])
-    // One request each, and no reason to have touched the Torrentio mirror.
-    assert.deepEqual(hostsOf(calls).sort(), [BRAZUCA, TORRENTIO].sort())
+    assert.equal(streams.length, 4)
+    // One request per provider, and no reason to have touched either mirror.
+    assert.deepEqual(hostsOf(calls).sort(), [BRAZUCA, COMET, MEDIAFUSION, TORRENTIO].sort())
   })
 
   it('puts Brazuca first, because that is the order on screen', async () => {
@@ -148,17 +153,71 @@ describe('resolving a title', () => {
     assert.equal(brazuca.pathname, '/stream/movie/tt0111161.json')
   })
 
-  it('returns only streams the app can turn into a source', async () => {
+})
+
+describe('configuring the ones that take configuration', () => {
+  it('builds Comet its base64url settings segment', async () => {
     const { plugin } = await load()
+    const { api, calls } = makeApi(plugin.manifest.hosts, answers({}))
+    await plugin.streams(MOVIE, api)
+
+    const segment = new URL(calls.find((url) => url.includes(COMET))).pathname.split('/')[1]
+    assert.doesNotMatch(segment, /[+/=]/, 'base64url, not base64')
+    const decoded = JSON.parse(Buffer.from(segment, 'base64url').toString('utf8'))
+    assert.equal(decoded.debridService, 'torrent', 'no debrid account means torrent mode')
+  })
+
+  it('asks MediaFusion anonymously, on the bare path', async () => {
+    // Its settings are either an HTTP header — and api.fetch sends none — or a
+    // path segment encrypted with the instance's own key, which cannot be
+    // minted from out here. Anonymous is the honest default.
+    const { plugin } = await load()
+    const { api, calls } = makeApi(plugin.manifest.hosts, answers({}))
+    await plugin.streams(MOVIE, api)
+
+    const asked = calls.filter((url) => url.includes(MEDIAFUSION))
+    assert.equal(asked.length, 1)
+    assert.equal(new URL(asked[0]).pathname, '/stream/movie/tt0111161.json')
+  })
+
+  it('leaves the pasted MediaFusion config where a person can find it', async () => {
+    const { source } = await load()
+    assert.match(source, /const MEDIAFUSION_CONFIG = ''/, 'empty and ready to be filled in')
+  })
+})
+
+describe('streams that arrive as magnets', () => {
+  it('moves the infohash to the field the app actually reads', async () => {
+    // readLocation in web/src/catalog/streams.ts takes a 40-hex infoHash or an
+    // https url. A magnet: url is neither, and would be dropped in silence.
+    const { plugin } = await load()
+    const hash = 'e'.repeat(40)
     const { api } = makeApi(plugin.manifest.hosts, answers({
-      [BRAZUCA]: body([FROM_BRAZUCA, { name: 'Direct', url: 'https://example.com/movie.mkv' }]),
+      [COMET]: body([{ name: 'Comet', title: 'x', url: `magnet:?xt=urn:btih:${hash.toUpperCase()}&dn=Movie` }]),
     }))
-    // readLocation in web/src/catalog/streams.ts drops anything that is neither.
-    for (const stream of plain(await plugin.streams(MOVIE, api))) {
-      const isTorrent = typeof stream.infoHash === 'string' && /^[0-9a-f]{40}$/i.test(stream.infoHash)
-      const isDirect = typeof stream.url === 'string' && new URL(stream.url).protocol === 'https:'
-      assert.ok(isTorrent || isDirect, `unusable stream: ${JSON.stringify(stream)}`)
-    }
+
+    const [stream] = plain(await plugin.streams(MOVIE, api))
+    assert.equal(stream.infoHash, hash)
+    assert.equal(stream.url, undefined, 'the magnet is gone, not left alongside')
+  })
+
+  it('leaves an https url alone', async () => {
+    const { plugin } = await load()
+    const direct = { name: 'Direct', title: 'x', url: 'https://example.com/movie.mkv' }
+    const { api } = makeApi(plugin.manifest.hosts, answers({ [COMET]: body([direct]) }))
+
+    assert.deepEqual(plain(await plugin.streams(MOVIE, api)), [direct])
+  })
+
+  it('dedupes a magnet against the same torrent seen as an infoHash', async () => {
+    const { plugin } = await load()
+    const hash = FROM_BRAZUCA.infoHash
+    const { api } = makeApi(plugin.manifest.hosts, answers({
+      [BRAZUCA]: body([FROM_BRAZUCA]),
+      [COMET]: body([{ name: 'Comet', title: 'x', fileIdx: 0, url: `magnet:?xt=urn:btih:${hash}` }]),
+    }))
+
+    assert.equal(plain(await plugin.streams(MOVIE, api)).length, 1)
   })
 })
 
@@ -247,9 +306,11 @@ describe('mirrors, which are tried in order and not merged', () => {
     await plugin.streams(MOVIE, api)
 
     // `streams: []` means the upstream looked and found nothing, so no
-    // bare-path retry anywhere: one request for Brazuca, then Torrentio's two
-    // mirrors in turn because neither had anything.
-    assert.deepEqual(hostsOf(calls).sort(), [BRAZUCA, ELFHOSTED, TORRENTIO].sort())
+    // bare-path retry anywhere: one request per mirror, and every mirror gets
+    // its turn because no mirror had anything.
+    assert.deepEqual(hostsOf(calls).sort(), [
+      BRAZUCA, COMET, COMET_MIRROR, ELFHOSTED, MEDIAFUSION, TORRENTIO,
+    ].sort())
   })
 })
 

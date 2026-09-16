@@ -24,18 +24,21 @@
  */
 
 export const manifest = {
-  id: 'torrentio-brazuca',
-  name: 'Torrentio + Brazuca',
-  version: '2.0.0',
+  id: 'juntos-torrent-sources',
+  name: 'Torrentio + Brazuca + Comet + MediaFusion',
+  version: '3.0.0',
   // Every host this plugin may ever reach. The page compares the hostname of
   // each request against this list by exact equality, on the URL asked for and
   // again on the URL the answer came from, so a host added to PROVIDERS later
   // must be added here too — and adding one holds the update until whoever
   // installed the plugin approves the new host by name.
   hosts: [
+    '94c8cb9f702d-brazuca-torrents.baby-beamup.club',
     'torrentio.strem.fun',
     'torrentio.elfhosted.com',
-    '94c8cb9f702d-brazuca-torrents.baby-beamup.club',
+    'comet.elfhosted.com',
+    'comet.feels.legal',
+    'mediafusion.elfhosted.com',
   ],
   updateUrl: 'https://github.com/guilhepinheiro1701-create/juntos.lol-torrent',
 }
@@ -62,6 +65,47 @@ const TORRENTIO_CONFIG = [
 ].join('|')
 
 /**
+ * base64url, because the worker scope keeps `btoa` and this is the whole of
+ * what an addon that wants JSON in a path segment needs: no padding, and the
+ * two characters that would otherwise have to be percent-encoded swapped out.
+ */
+function base64url(value) {
+  return btoa(JSON.stringify(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+/**
+ * Comet takes its settings as one path segment: base64url of a JSON object.
+ * Plain base64 of plain JSON, not a signed or encrypted blob, so the plugin
+ * builds it here instead of asking anyone to paste one.
+ *
+ * `debridService: 'torrent'` is Comet's direct-torrent mode: no debrid account,
+ * and the answer is magnets rather than links into someone's cache — which is
+ * the only shape juntos.lol can open anyway. `{}` (which encodes to `e30`)
+ * also works and is the thing to try if a Comet version ever rejects this.
+ */
+const COMET_CONFIG = base64url({ debridService: 'torrent' })
+
+/**
+ * MediaFusion is the one that cannot configure itself, and it is worth saying
+ * why rather than leaving an empty string looking like an oversight.
+ *
+ * Its settings travel either as an HTTP header (`encoded_user_data`) or as a
+ * path segment. The header is out of reach: `api.fetch` takes a URL and
+ * nothing else — no headers, no method, no body — because every request is
+ * performed by the juntos.lol server on the plugin's behalf. And the path
+ * segment is **encrypted with the instance's own SECRET_KEY** (AES-256), so it
+ * cannot be constructed from outside: only that instance can mint one.
+ *
+ * So MediaFusion is asked anonymously, on the bare path, and takes whatever
+ * defaults it applies to an unconfigured caller. To do better, open
+ * https://mediafusion.elfhosted.com/configure, configure it, and paste the
+ * long opaque segment out of the URL it gives you between the quotes below.
+ * Empty means anonymous; filled, it is tried first and the bare path stays as
+ * the fallback.
+ */
+const MEDIAFUSION_CONFIG = ''
+
+/**
  * Who to ask. Every entry speaks the Stremio stream protocol —
  * `/stream/{type}/{id}.json` — which is what makes this a bridge and not a
  * client of any one addon.
@@ -78,8 +122,8 @@ const TORRENTIO_CONFIG = [
  */
 const PROVIDERS = [
   // First, because dubbed and legendado releases are what a Brazilian watch
-  // party is looking for, and Torrentio's own results are a long tail of
-  // English ones. Anyone who wants it the other way has the language filter.
+  // party is looking for, and the others are a long tail of English ones.
+  // Anyone who wants it the other way has the language filter.
   {
     name: 'Brazuca Torrents',
     mirrors: [
@@ -99,6 +143,21 @@ const PROVIDERS = [
       // juntos.lol server, which is on one. (The other remedy lives on the
       // server: `PLUGIN_FETCH_PROXY`.)
       { base: 'https://torrentio.elfhosted.com', config: TORRENTIO_CONFIG },
+    ],
+  },
+  {
+    name: 'Comet',
+    mirrors: [
+      { base: 'https://comet.elfhosted.com', config: COMET_CONFIG },
+      { base: 'https://comet.feels.legal', config: COMET_CONFIG },
+    ],
+  },
+  {
+    name: 'MediaFusion',
+    mirrors: [
+      // `config` empty means the bare path, which is the anonymous mode. See
+      // MEDIAFUSION_CONFIG above for why it cannot be filled in from here.
+      { base: 'https://mediafusion.elfhosted.com', config: MEDIAFUSION_CONFIG || null },
     ],
   },
 ]
@@ -181,12 +240,36 @@ async function ask(api, mirror, type, id) {
   return (await fetchStreams(api, bare)) ?? []
 }
 
+const MAGNET_BTIH = /^magnet:\?.*\bxt=urn:btih:([0-9a-fA-F]{40})\b/
+
+/**
+ * Turns a stream juntos.lol would drop into one it can open, where that is
+ * only a matter of spelling.
+ *
+ * `readLocation` in web/src/catalog/streams.ts takes a 40-hex `infoHash` or an
+ * `https:` `url`, and nothing else — so a `url` holding a `magnet:` URI, which
+ * is how Comet and MediaFusion hand back a torrent when no debrid account is
+ * configured, is thrown away without a word. The infohash is right there in
+ * the URI; moving it to the field the app reads is the whole fix.
+ *
+ * Only the 40-hex form is converted. A base32 infohash would need decoding to
+ * bytes and back to hex, and it is rare enough not to be worth carrying.
+ */
+function normalize(stream) {
+  if (typeof stream.infoHash === 'string' || typeof stream.url !== 'string') return stream
+  const magnet = MAGNET_BTIH.exec(stream.url)
+  if (!magnet) return stream
+  const { url, ...rest } = stream
+  return { ...rest, infoHash: magnet[1].toLowerCase() }
+}
+
 /** Same torrent from two providers is one row; the first spelling of it wins. */
 function dedupe(streams) {
   const seen = new Set()
   const out = []
-  for (const stream of streams) {
-    if (typeof stream !== 'object' || stream === null) continue
+  for (const raw of streams) {
+    if (typeof raw !== 'object' || raw === null) continue
+    const stream = normalize(raw)
     const key = typeof stream.infoHash === 'string'
       ? `${stream.infoHash.toLowerCase()}:${stream.fileIdx ?? ''}`
       : typeof stream.url === 'string' ? `url:${stream.url}` : null
