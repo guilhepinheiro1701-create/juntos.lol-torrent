@@ -24,15 +24,19 @@
  */
 
 export const manifest = {
-  id: 'torrentio',
-  name: 'Torrentio',
-  version: '1.0.0',
+  id: 'torrentio-brazuca',
+  name: 'Torrentio + Brazuca',
+  version: '2.0.0',
   // Every host this plugin may ever reach. The page compares the hostname of
   // each request against this list by exact equality, on the URL asked for and
-  // again on the URL the answer came from, so a mirror added to SOURCES later
+  // again on the URL the answer came from, so a host added to PROVIDERS later
   // must be added here too — and adding one holds the update until whoever
   // installed the plugin approves the new host by name.
-  hosts: ['torrentio.strem.fun', 'torrentio.elfhosted.com'],
+  hosts: [
+    'torrentio.strem.fun',
+    'torrentio.elfhosted.com',
+    '94c8cb9f702d-brazuca-torrents.baby-beamup.club',
+  ],
   updateUrl: 'https://github.com/guilhepinheiro1701-create/juntos.lol-torrent',
 }
 
@@ -58,36 +62,55 @@ const TORRENTIO_CONFIG = [
 ].join('|')
 
 /**
- * Where to ask, in order of preference. Each entry is a Stremio stream addon;
- * any addon speaking `/stream/{type}/{id}.json` fits here, which is what makes
- * this a bridge rather than a Torrentio client.
+ * Who to ask. Every entry speaks the Stremio stream protocol —
+ * `/stream/{type}/{id}.json` — which is what makes this a bridge and not a
+ * client of any one addon.
  *
- * The ElfHosted entry is the community mirror, and it earns its place: the
- * main instance refuses datacenter address ranges, and every request from this
- * plugin leaves from the juntos.lol server, which is on one. When that is the
- * problem, the mirror answers where the main instance did not. (The other
- * remedy lives on the server: `PLUGIN_FETCH_PROXY`.)
+ * `mirrors` and the provider list are asked differently on purpose. Mirrors of
+ * one addon hold the same catalogue, so they are tried **in order until one
+ * answers**: asking a second would spend a request to produce duplicates.
+ * Different addons hold different catalogues, so providers are asked **all at
+ * once and merged**: that is the whole reason to have more than one.
+ *
+ * The order here is the order on screen. juntos.lol filters the list by
+ * resolution and by language flag, but it never reorders it — whatever this
+ * function returns is what a viewer reads top to bottom.
  */
-const SOURCES = [
-  { name: 'Torrentio', base: 'https://torrentio.strem.fun', config: TORRENTIO_CONFIG },
-  { name: 'Torrentio (ElfHosted)', base: 'https://torrentio.elfhosted.com', config: TORRENTIO_CONFIG },
+const PROVIDERS = [
+  // First, because dubbed and legendado releases are what a Brazilian watch
+  // party is looking for, and Torrentio's own results are a long tail of
+  // English ones. Anyone who wants it the other way has the language filter.
+  {
+    name: 'Brazuca Torrents',
+    mirrors: [
+      // Brazilian trackers — BaixaFilmes, RedeTorrent, VacaTorrent. The addon
+      // takes no options, so there is no configured path to try first.
+      { base: 'https://94c8cb9f702d-brazuca-torrents.baby-beamup.club', config: null },
+    ],
+  },
+  {
+    name: 'Torrentio',
+    mirrors: [
+      { base: 'https://torrentio.strem.fun', config: TORRENTIO_CONFIG },
+      // ElfHosted's own deployment of Torrentio, which they run as
+      // KnightCrawler: same code and same URL grammar, its own index. It earns
+      // its place as the fallback because the main instance refuses datacenter
+      // address ranges, and every request from this plugin leaves from the
+      // juntos.lol server, which is on one. (The other remedy lives on the
+      // server: `PLUGIN_FETCH_PROXY`.)
+      { base: 'https://torrentio.elfhosted.com', config: TORRENTIO_CONFIG },
+    ],
+  },
 ]
-
-/**
- * 'fallback' asks the next source only when the previous one gave nothing,
- * which is the right shape for mirrors of one addon: they hold the same
- * catalogue, so merging them would spend requests to produce duplicates.
- *
- * 'merge' asks all of them at once and concatenates, deduplicated. Switch to
- * it when SOURCES stops being mirrors and becomes different addons.
- */
-const MODE = 'fallback'
 
 /** Under the host's 15s, with room left for the worker to post the answer back. */
 const RUN_BUDGET_MS = 12_000
 
-/** Under the server hop's 10s, so a hung upstream cannot eat the whole run. */
-const ATTEMPT_MS = 5_500
+/**
+ * Under the server hop's 10s, and small enough that a provider can spend it
+ * on every one of its mirrors and still finish inside RUN_BUDGET_MS.
+ */
+const ATTEMPT_MS = 5_000
 
 const TYPES = new Set(['movie', 'series'])
 
@@ -144,21 +167,21 @@ async function fetchStreams(api, url) {
 }
 
 /**
- * One source, configured path first and bare path as the fallback. The retry
- * is what keeps a drifted option key from taking the source down with it:
+ * One mirror, configured path first and bare path as the fallback. The retry
+ * is what keeps a drifted option key from taking the mirror down with it:
  * worst case Torrentio answers unfiltered, which is worse than configured and
- * far better than nothing.
+ * far better than nothing. A mirror with no options skips straight to bare.
  */
-async function ask(api, source, type, id) {
-  const bare = `${source.base}/stream/${type}/${id}.json`
-  if (source.config) {
-    const configured = await fetchStreams(api, `${source.base}/${source.config}/stream/${type}/${id}.json`)
+async function ask(api, mirror, type, id) {
+  const bare = `${mirror.base}/stream/${type}/${id}.json`
+  if (mirror.config) {
+    const configured = await fetchStreams(api, `${mirror.base}/${mirror.config}/stream/${type}/${id}.json`)
     if (configured !== null) return configured
   }
   return (await fetchStreams(api, bare)) ?? []
 }
 
-/** Same torrent from two sources is one row; the first spelling of it wins. */
+/** Same torrent from two providers is one row; the first spelling of it wins. */
 function dedupe(streams) {
   const seen = new Set()
   const out = []
@@ -174,31 +197,35 @@ function dedupe(streams) {
   return out
 }
 
+/**
+ * One provider: its mirrors in order, stopping at the first that gives
+ * something. A mirror that times out or answers empty gave nothing, so the
+ * next is tried either way — while the run still has time to try it.
+ */
+async function askProvider(api, provider, type, id, remaining) {
+  for (const mirror of provider.mirrors) {
+    const budget = remaining()
+    if (budget <= 0) break
+    const result = await withDeadline(ask(api, mirror, type, id), budget)
+    if (result !== timeout && result.length > 0) return result
+  }
+  return []
+}
+
 export async function streams(target, api) {
   if (typeof target !== 'object' || target === null) throw new Error('no target')
   const { type } = target
   if (!TYPES.has(type)) throw new Error(`unsupported type: ${String(type)}`)
   const id = streamId(target)
 
-  // One clock for the whole resolution, so that a source which spends its
-  // attempt cannot push the run past the budget the host allows it.
+  // One clock for the whole resolution, so that a provider working through its
+  // mirrors cannot push the run past the budget the host allows it.
   const deadline = Date.now() + RUN_BUDGET_MS
   const remaining = () => Math.min(ATTEMPT_MS, deadline - Date.now())
 
-  if (MODE === 'merge') {
-    const answers = await Promise.all(SOURCES.map(async (source) => {
-      const result = await withDeadline(ask(api, source, type, id), remaining())
-      return result === timeout ? [] : result
-    }))
-    return dedupe(answers.flat())
-  }
-
-  for (const source of SOURCES) {
-    if (remaining() <= 0) break
-    const result = await withDeadline(ask(api, source, type, id), remaining())
-    // A source that timed out or answered empty is a source that gave nothing;
-    // the next one is asked either way, while there is time to ask it.
-    if (result !== timeout && result.length > 0) return dedupe(result)
-  }
-  return []
+  const answers = await Promise.all(
+    PROVIDERS.map((provider) => askProvider(api, provider, type, id, remaining)),
+  )
+  // Concatenated in PROVIDERS order, because that order is what a viewer reads.
+  return dedupe(answers.flat())
 }
