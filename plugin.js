@@ -26,7 +26,7 @@
 export const manifest = {
   id: 'juntos-torrent-sources',
   name: 'Torrentio + Brazuca + Comet + MediaFusion',
-  version: '3.0.0',
+  version: '3.1.0',
   // Every host this plugin may ever reach. The page compares the hostname of
   // each request against this list by exact equality, on the URL asked for and
   // again on the URL the answer came from, so a host added to PROVIDERS later
@@ -86,8 +86,8 @@ function base64url(value) {
 const COMET_CONFIG = base64url({ debridService: 'torrent' })
 
 /**
- * MediaFusion is the one that cannot configure itself, and it is worth saying
- * why rather than leaving an empty string looking like an oversight.
+ * MediaFusion is the one this plugin cannot configure for you, and it is worth
+ * saying why rather than leaving a long opaque string looking unexplained.
  *
  * Its settings travel either as an HTTP header (`encoded_user_data`) or as a
  * path segment. The header is out of reach: `api.fetch` takes a URL and
@@ -96,14 +96,19 @@ const COMET_CONFIG = base64url({ debridService: 'torrent' })
  * segment is **encrypted with the instance's own SECRET_KEY** (AES-256), so it
  * cannot be constructed from outside: only that instance can mint one.
  *
- * So MediaFusion is asked anonymously, on the bare path, and takes whatever
- * defaults it applies to an unconfigured caller. To do better, open
- * https://mediafusion.elfhosted.com/configure, configure it, and paste the
- * long opaque segment out of the URL it gives you between the quotes below.
- * Empty means anonymous; filled, it is tried first and the bare path stays as
- * the fallback.
+ * So the one below was minted at https://mediafusion.elfhosted.com/configure
+ * and pasted in. It carries catalogue, quality and language preferences and no
+ * debrid account — which is the only reason it can live in a public file.
+ * **A config generated with a debrid service selected carries that account's
+ * API token inside it, and must never be committed here.** This repository has
+ * to stay public for juntos.lol to install the plugin from it, so anything in
+ * this file is published.
+ *
+ * Empty is also valid, and means asking anonymously. Either way the bare path
+ * stays as the fallback, so a segment this instance stops accepting costs a
+ * request rather than the provider.
  */
-const MEDIAFUSION_CONFIG = ''
+const MEDIAFUSION_CONFIG = 'D-3-608kLJEnktYCZcSiuvZIMiNNDrOYf7BWbYrM5LzlyqZYMVQ1ngmr9_3rF2aozyN7JmYyPiw2H33J11vWp2v8w6bkrW6f9l9kGIhpLm31fPwae3uqILuQApT0xToo4fGQAKu8p23hqjSz8t5dsT5X_jERG0fvOcOQGRW0WhrqjP2k7YLgs06SPDDTiBMRrJbzRNeP8u7k1yhMMyc4St1H_6WuupMh3eN98b-E2ngSGSqaPIEmE9647ibejzxV7PxXavlfDK5qstRE6G9PUk9GIee9FAJ-7HhOwaUhLJUliuTnqCTYaSXrNjrOQgG-gIockR9QV_nyYwoejbt3c8gmnCfDPonfqfKd9qYjZc9y4bxpqGkGpAJQz9zt1Qn15lamIlfwXFf1enLJQdaTQgexi9YHa6YoxQYZa3V2KljMhiBSsybcG1W70yXCwq6K6kVlzHYaR11GJcMsPi8zTlBNRWs2sKtVcBvazFiM1tThfbFLVVPlB9SX9PXbYT8xf3ZQNA0Fr3Ck2pTvvpD3v48hXf0r2Fz0fM4gThfCGrczELFitFCs1SU-N-hGriflKt8LRNVxYS2lb-ECs7oJNdbgFySGCUvhnSDzeSEtVKivgSWru1wki6oR90sWGOHwvGmQuLUC0mluI-DeMdNHYLROUJc_ZcG7pfjmMHlV-k5__beEVGqDCetHOdaIBvPQDAABm0_0_EPDgTnQqFAZ-L4vdvGV2AFIIq86rF_zE2xgZeXtPBTK6BkhvyTE9BVg2Vv_EZ9M3E55hCkADHLXDNcFqQ9jJ91pQKLFApPk75eJhIzvnQhZLnTnXVVq97ZSFZYemCa95OgzO-W4CorrB5DXVXgIWivkcOaFxLzDExDdVZVvfP_dZKt1PpmcUSpJQAMLkloTsA0Ok-u01MoDJhS-SZ_l0EjfcPYAwXk3RFylkn3wi5RH5l1nqtcFCLy-sxVftAWYqqCu9tZRJtlm-VDzSs-PRjBWtqeZhI9HkuSR2bt_JBnS6rhsY_CBYfycJp7kUuqGJdkLTC00MIxggxUg'
 
 /**
  * Who to ask. Every entry speaks the Stremio stream protocol —

@@ -167,22 +167,41 @@ describe('configuring the ones that take configuration', () => {
     assert.equal(decoded.debridService, 'torrent', 'no debrid account means torrent mode')
   })
 
-  it('asks MediaFusion anonymously, on the bare path', async () => {
+  it('sends MediaFusion the config segment minted for this instance', async () => {
     // Its settings are either an HTTP header — and api.fetch sends none — or a
-    // path segment encrypted with the instance's own key, which cannot be
-    // minted from out here. Anonymous is the honest default.
+    // path segment encrypted with the instance's own key. The segment below
+    // was generated at /configure and pasted in; it cannot be built here.
     const { plugin } = await load()
     const { api, calls } = makeApi(plugin.manifest.hosts, answers({}))
     await plugin.streams(MOVIE, api)
 
-    const asked = calls.filter((url) => url.includes(MEDIAFUSION))
-    assert.equal(asked.length, 1)
-    assert.equal(new URL(asked[0]).pathname, '/stream/movie/tt0111161.json')
+    const [configured] = calls.filter((url) => url.includes(MEDIAFUSION))
+    const segment = new URL(configured).pathname.split('/')[1]
+    assert.match(segment, /^[A-Za-z0-9_-]+$/, 'base64url, safe in a path segment')
+    assert.ok(segment.length > 100, 'an encrypted blob, not a stray word')
   })
 
-  it('leaves the pasted MediaFusion config where a person can find it', async () => {
+  it('carries no debrid token into a file that gets published', async () => {
+    // The repository has to stay public for juntos.lol to install from it. A
+    // MediaFusion config generated with a debrid service selected holds that
+    // account's API token, so nothing that looks like a loose key belongs here.
     const { source } = await load()
-    assert.match(source, /const MEDIAFUSION_CONFIG = ''/, 'empty and ready to be filled in')
+    for (const pattern of [/realdebrid\s*[:=]/i, /torbox/i, /alldebrid/i, /premiumize/i, /api[_-]?key\s*[:=]\s*['"][^'"]+/i]) {
+      assert.doesNotMatch(source, pattern, `${pattern} has no business in a published plugin`)
+    }
+  })
+
+  it('keeps the bare path as the MediaFusion fallback', async () => {
+    const { plugin } = await load()
+    const { api, calls } = makeApi(plugin.manifest.hosts, (url) => {
+      const { hostname, pathname } = new URL(url)
+      if (hostname !== MEDIAFUSION) return body([])
+      return pathname === '/stream/movie/tt0111161.json' ? body([torrent('f')]) : { status: 400, body: 'Bad Request' }
+    })
+    const streams = plain(await plugin.streams(MOVIE, api))
+
+    assert.equal(streams.length, 1, 'a rejected segment costs a request, not the provider')
+    assert.equal(calls.filter((url) => url.includes(MEDIAFUSION)).length, 2)
   })
 })
 

@@ -98,7 +98,7 @@ caso, com tudo fora do ar, dez.
 | **Brazuca Torrents** | Não aceita opções. Caminho simples. |
 | **Torrentio** | Opções num segmento do caminho, montado em `TORRENTIO_CONFIG`. |
 | **Comet** | base64url de um JSON, montado pelo próprio plugin em `COMET_CONFIG`. |
-| **MediaFusion** | Anônimo por padrão. Veja abaixo. |
+| **MediaFusion** | Segmento cifrado, gerado no `/configure` da instância e colado em `MEDIAFUSION_CONFIG`. Veja abaixo. |
 
 **Torrentio** recebe a lista padrão de trackers mais os brasileiros — `comando`
 e `bludv`, que não estão no conjunto padrão dele —, com `language=portuguese`
@@ -111,20 +111,32 @@ debrid, e a resposta vem como magnet em vez de link para o cache de alguém — 
 sozinho com `btoa`, porque a configuração do Comet é base64 de JSON simples, não
 um blob assinado. Se alguma versão recusar, `{}` (que vira `e30`) é o que tentar.
 
-**MediaFusion é o único que não dá para configurar daqui**, e vale dizer por quê
-em vez de deixar uma string vazia parecendo descuido. As opções dele viajam ou
-num cabeçalho HTTP (`encoded_user_data`) ou num segmento do caminho. O cabeçalho
-está fora de alcance: `api.fetch` recebe uma URL e mais nada — sem cabeçalho, sem
-método, sem corpo — porque quem executa cada requisição é o servidor do
-juntos.lol em nome do plugin. E o segmento do caminho é **cifrado com a
-`SECRET_KEY` da própria instância** (AES-256): só ela consegue emitir um.
+**MediaFusion é o único que este plugin não consegue configurar sozinho**, e
+vale dizer por quê. As opções dele viajam ou num cabeçalho HTTP
+(`encoded_user_data`) ou num segmento do caminho. O cabeçalho está fora de
+alcance: `api.fetch` recebe uma URL e mais nada — sem cabeçalho, sem método, sem
+corpo — porque quem executa cada requisição é o servidor do juntos.lol em nome
+do plugin. E o segmento do caminho é **cifrado com a `SECRET_KEY` da própria
+instância** (AES-256): só ela consegue emitir um.
 
-Então ele é perguntado anonimamente, no caminho simples, e fica com os padrões
-que a instância aplica a quem não se identificou. Para fazer melhor, abra
-[mediafusion.elfhosted.com/configure](https://mediafusion.elfhosted.com/configure),
-configure, e cole o segmento opaco e comprido da URL resultante em
-`MEDIAFUSION_CONFIG`, no topo do `plugin.js`. Preenchido, ele é tentado
-primeiro, com o caminho simples de reserva.
+Então o que está em `MEDIAFUSION_CONFIG` foi gerado em
+[mediafusion.elfhosted.com/configure](https://mediafusion.elfhosted.com/configure)
+e colado ali. Ele carrega preferências de catálogo, qualidade e idioma, e
+**nenhuma conta debrid** — que é o único motivo pelo qual pode ficar num arquivo
+público.
+
+> **Se você regerar essa configuração escolhendo um serviço debrid**
+> (Real-Debrid, TorBox, AllDebrid, Premiumize), **o token da sua conta vai
+> dentro do blob.** Este repositório precisa ser público para o juntos.lol
+> instalar o plugin a partir dele, então tudo que está no `plugin.js` está
+> publicado, e o histórico do git guarda o que já foi commitado. Nesse caso,
+> preencha a constante numa cópia local, tire o `updateUrl` do manifesto e
+> instale arrastando o arquivo — o blob não sai da sua máquina, ao custo de
+> perder a atualização automática.
+
+Vazio também é válido, e significa perguntar anonimamente. De um jeito ou de
+outro o caminho simples fica de reserva, então um segmento que a instância
+deixe de aceitar custa uma requisição e não o provedor.
 
 ## Acrescentar uma fonte
 
@@ -187,10 +199,11 @@ que os testes exercitam.
 Os endereços, a gramática de URL de cada addon e a grafia das opções foram
 conferidos contra o uso real em dezenas de projetos independentes, não contra os
 serviços: o ambiente em que este plugin foi escrito não tem saída para esses
-hosts. Então **não está confirmado que os seis respondem hoje**, e o
-comportamento anônimo do MediaFusion é o ponto mais incerto do conjunto — há
-projeto que o usa assim e há registro de instância recusando quem não se
-identifica.
+hosts. Então **não está confirmado que os seis respondem hoje**.
+
+A exceção é o MediaFusion, que virou o mais certo dos quatro: a configuração em
+`MEDIAFUSION_CONFIG` foi gerada na própria instância, o que prova que ela
+respondia quando foi gerada e que aceita esse segmento.
 
 É de baixo risco por desenho, e há teste para cada caso: provedor fora do ar não
 derruba os outros, espelho fora do ar custa a vez dele, e opção errada cai no
