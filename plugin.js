@@ -26,7 +26,7 @@
 export const manifest = {
   id: 'juntos-torrent-sources',
   name: 'Torrentio + Brazuca + Comet + MediaFusion',
-  version: '3.2.0',
+  version: '3.3.0',
   // Every host this plugin may ever reach. The page compares the hostname of
   // each request against this list by exact equality, on the URL asked for and
   // again on the URL the answer came from, so a host added to PROVIDERS later
@@ -39,6 +39,7 @@ export const manifest = {
     'comet.elfhosted.com',
     'comet.feels.legal',
     'mediafusion.elfhosted.com',
+    '27a5b2bfe3c0-stremio-brazilian-addon.baby-beamup.club',
   ],
   updateUrl: 'https://github.com/guilhepinheiro1701-create/juntos.lol-torrent',
 }
@@ -135,6 +136,16 @@ const PROVIDERS = [
       // Brazilian trackers — BaixaFilmes, RedeTorrent, VacaTorrent. The addon
       // takes no options, so there is no configured path to try first.
       { base: 'https://94c8cb9f702d-brazuca-torrents.baby-beamup.club', config: null },
+    ],
+  },
+  {
+    // Movies only: the live manifest declares `types: ["movie"]`, so asking it
+    // for an episode is a request spent to be told nothing. `types` here is
+    // what keeps that from happening.
+    name: 'Mico-Leão Dublado',
+    types: ['movie'],
+    mirrors: [
+      { base: 'https://27a5b2bfe3c0-stremio-brazilian-addon.baby-beamup.club', config: null },
     ],
   },
   {
@@ -262,6 +273,34 @@ function describe(stream) {
   return { ...stream, title: stream.description }
 }
 
+/** Binary units, and the spelling `parseStreamTitle` knows how to read back. */
+function humanSize(bytes) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let unit = 0
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit += 1 }
+  return `${unit === 0 ? value : value.toFixed(2)} ${units[unit]}`
+}
+
+/**
+ * Folds seeder count and size into the title, where the app looks for them.
+ *
+ * Mico-Leão Dublado carries both as top-level fields — `seeders` and `size` in
+ * its stream model — while `parseStreamTitle` only ever reads the `👤` and `💾`
+ * markers out of the title text. So the numbers are right there in the payload
+ * and the row still renders without them, which is also what keeps `seeded()`
+ * from being able to tell a dead torrent from a quiet one.
+ */
+function stats(stream) {
+  const title = typeof stream.title === 'string' ? stream.title : ''
+  if (title.includes('👤') || title.includes('💾')) return stream
+  const parts = []
+  if (Number.isFinite(stream.seeders)) parts.push(`👤 ${Math.trunc(stream.seeders)}`)
+  if (Number.isFinite(stream.size) && stream.size > 0) parts.push(`💾 ${humanSize(stream.size)}`)
+  if (parts.length === 0) return stream
+  return { ...stream, title: title === '' ? parts.join(' ') : `${title}\n${parts.join(' ')}` }
+}
+
 /**
  * `👤 0`, written out. Only a count that is actually legible counts: a stream
  * that never says is never dropped.
@@ -314,7 +353,7 @@ function dedupe(streams) {
   const out = []
   for (const raw of streams) {
     if (typeof raw !== 'object' || raw === null) continue
-    const stream = normalize(describe(raw))
+    const stream = normalize(stats(describe(raw)))
     if (!seeded(stream)) continue
     const key = typeof stream.infoHash === 'string'
       ? `${stream.infoHash.toLowerCase()}:${stream.fileIdx ?? ''}`
@@ -353,7 +392,9 @@ export async function streams(target, api) {
   const remaining = () => Math.min(ATTEMPT_MS, deadline - Date.now())
 
   const answers = await Promise.all(
-    PROVIDERS.map((provider) => askProvider(api, provider, type, id, remaining)),
+    PROVIDERS
+      .filter((provider) => !provider.types || provider.types.includes(type))
+      .map((provider) => askProvider(api, provider, type, id, remaining)),
   )
   // Concatenated in PROVIDERS order, because that order is what a viewer reads.
   return dedupe(answers.flat())

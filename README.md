@@ -1,7 +1,7 @@
 # Fontes de torrent para o juntos.lol
 
-Plugin que liga quatro addons do Stremio — **Brazuca Torrents**,
-**Torrentio**, **Comet** e **MediaFusion** — ao
+Plugin que liga cinco addons do Stremio — **Brazuca Torrents**,
+**Mico-Leão Dublado**, **Torrentio**, **Comet** e **MediaFusion** — ao
 [juntos.lol](https://juntos.lol), e serve de ponte para qualquer outro que fale
 o mesmo protocolo.
 
@@ -27,13 +27,14 @@ realmente importa — **os hosts que ele vai alcançar**:
 | Host | Provedor |
 | --- | --- |
 | `94c8cb9f702d-brazuca-torrents.baby-beamup.club` | Brazuca Torrents |
+| `27a5b2bfe3c0-stremio-brazilian-addon.baby-beamup.club` | Mico-Leão Dublado (só filmes) |
 | `torrentio.strem.fun` | Torrentio |
 | `torrentio.elfhosted.com` | Torrentio (espelho) |
 | `comet.elfhosted.com` | Comet |
 | `comet.feels.legal` | Comet (espelho) |
 | `mediafusion.elfhosted.com` | MediaFusion |
 
-Esses seis são tudo que este plugin consegue pedir. O juntos.lol confere cada
+Esses sete são tudo que este plugin consegue pedir. O juntos.lol confere cada
 requisição contra essa lista por igualdade exata de hostname, tanto na URL
 pedida quanto na URL onde a resposta chegou, então um redirecionamento para
 fora da lista é barrado igual.
@@ -60,9 +61,13 @@ seeders e bandeiras de idioma são interpretados do outro lado, em
 `web/src/catalog/streams.ts`, onde esse parsing já tem teste. O que este plugin
 acrescenta é o que o outro lado não tem como fazer.
 
-**Quatro provedores, fundidos.** Acervos diferentes, então os quatro são
+**Cinco provedores, fundidos.** Acervos diferentes, então todos são
 perguntados de uma vez e as respostas unidas, sem repetir: um torrent que dois
 conhecem vira uma linha só.
+
+**Provedor que não serve o tipo não é perguntado.** O manifesto vivo do
+Mico-Leão Dublado declara `types: ["movie"]`, então pedir um episódio a ele é
+gastar requisição para ouvir nada. O campo `types` no `PROVIDERS` evita isso.
 
 **Espelhos, em fila.** Dentro de um provedor é o contrário: espelhos têm o
 mesmo acervo, então só se pergunta ao seguinte quando o anterior não deu nada.
@@ -88,6 +93,12 @@ sem bandeira de idioma — e, sem nada para ler, o `streamResolution` jogaria
 todas elas no balde `sd`. Copiar um campo no outro é a correção inteira, e tem
 de acontecer aqui porque o outro lado não sabe que o campo existe.
 
+**Seeders e tamanho entram no título.** O Mico-Leão Dublado carrega os dois
+como campos de topo — `seeders` e `size` no modelo dele —, e o
+`parseStreamTitle` só lê os marcadores `👤` e `💾` de dentro do texto do título.
+Os números estavam no payload e a linha aparecia sem eles; dobrá-los no título
+resolve, e de quebra é o que permite ao filtro abaixo enxergar um zero.
+
 **Torrent sem seeder é descartado.** O juntos.lol lê os bytes do swarm: sem
 peer não há byte, e o que o host vê não é "sem seeders" e sim um remux que
 morre na primeira leitura — `Error: Assertion failed.`, zero faixas, zero
@@ -105,14 +116,15 @@ a vez dele.
 **Orçamento.** O juntos.lol dá a cada resolução 15 segundos e 32 requisições, e
 mata o worker quando um dos dois acaba. Cada salto pelo servidor pode levar até
 10 segundos sozinho. Os provedores são perguntados em paralelo, cada um com um
-relógio menor que o do host. No caminho feliz são quatro requisições; no pior
-caso, com tudo fora do ar, dez.
+relógio menor que o do host. No caminho feliz são cinco requisições num filme e
+quatro num episódio; no pior caso, com tudo fora do ar, doze e onze.
 
 ## Configuração de cada provedor
 
 | Provedor | Como se configura |
 | --- | --- |
 | **Brazuca Torrents** | Não aceita opções. Caminho simples. |
+| **Mico-Leão Dublado** | Não aceita opções. Só filmes. |
 | **Torrentio** | Opções num segmento do caminho, montado em `TORRENTIO_CONFIG`. |
 | **Comet** | base64url de um JSON, montado pelo próprio plugin em `COMET_CONFIG`. |
 | **MediaFusion** | Segmento cifrado, gerado no `/configure` da instância e colado em `MEDIAFUSION_CONFIG`. Veja abaixo. |
@@ -159,10 +171,9 @@ deixe de aceitar custa uma requisição e não o provedor.
 
 É acrescentar um objeto a `PROVIDERS` — qualquer addon com
 `/stream/{tipo}/{id}.json` serve, que é o que faz disto uma ponte e não um
-cliente de nenhum deles em particular. Um candidato para quem quer dublado é o
-Mico-Leão Dublado (`27a5b2bfe3c0-stremio-brazilian-addon.baby-beamup.club`), que
-devolve `url` em vez de `infoHash` — o juntos.lol abre as duas formas, e a por
-URL nem passa pelo swarm.
+cliente de nenhum deles em particular. Se o addon só atende parte dos tipos,
+declare `types: ['movie']` (ou `['series']`) e ele deixa de ser perguntado para
+o que não serve.
 
 Três coisas andam junto: o host novo vai também em `manifest.hosts`; a
 atualização fica retida até alguém aprovar o host; e um provedor novo custa
@@ -216,7 +227,7 @@ que os testes exercitam.
 Os endereços, a gramática de URL de cada addon e a grafia das opções foram
 conferidos contra o uso real em dezenas de projetos independentes, não contra os
 serviços: o ambiente em que este plugin foi escrito não tem saída para esses
-hosts. Então **não está confirmado que os seis respondem hoje**.
+hosts. Então **não está confirmado que os sete respondem hoje**.
 
 A exceção é o MediaFusion, que virou o mais certo dos quatro: a configuração em
 `MEDIAFUSION_CONFIG` foi gerada na própria instância, o que prova que ela

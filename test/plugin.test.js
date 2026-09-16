@@ -15,6 +15,7 @@ const ELFHOSTED = 'torrentio.elfhosted.com'
 const COMET = 'comet.elfhosted.com'
 const COMET_MIRROR = 'comet.feels.legal'
 const MEDIAFUSION = 'mediafusion.elfhosted.com'
+const MICOLEAO = '27a5b2bfe3c0-stremio-brazilian-addon.baby-beamup.club'
 
 const MOVIE = { type: 'movie', id: 'tt0111161' }
 const EPISODE = { type: 'series', id: 'tt0903747', season: 5, episode: 14 }
@@ -106,12 +107,13 @@ describe('resolving a title', () => {
       [TORRENTIO]: body([FROM_TORRENTIO]),
       [COMET]: body([torrent('c')]),
       [MEDIAFUSION]: body([torrent('d')]),
+      [MICOLEAO]: body([torrent('e')]),
     }))
     const streams = plain(await plugin.streams(MOVIE, api))
 
-    assert.equal(streams.length, 4)
+    assert.equal(streams.length, 5)
     // One request per provider, and no reason to have touched either mirror.
-    assert.deepEqual(hostsOf(calls).sort(), [BRAZUCA, COMET, MEDIAFUSION, TORRENTIO].sort())
+    assert.deepEqual(hostsOf(calls).sort(), [BRAZUCA, COMET, MEDIAFUSION, MICOLEAO, TORRENTIO].sort())
   })
 
   it('puts Brazuca first, because that is the order on screen', async () => {
@@ -328,7 +330,7 @@ describe('mirrors, which are tried in order and not merged', () => {
     // bare-path retry anywhere: one request per mirror, and every mirror gets
     // its turn because no mirror had anything.
     assert.deepEqual(hostsOf(calls).sort(), [
-      BRAZUCA, COMET, COMET_MIRROR, ELFHOSTED, MEDIAFUSION, TORRENTIO,
+      BRAZUCA, COMET, COMET_MIRROR, ELFHOSTED, MEDIAFUSION, MICOLEAO, TORRENTIO,
     ].sort())
   })
 })
@@ -384,6 +386,65 @@ describe('torrents nobody is seeding', () => {
     const { api } = makeApi(plugin.manifest.hosts, answers({ [BRAZUCA]: body([quiet]) }))
 
     assert.deepEqual(plain(await plugin.streams(MOVIE, api)), [quiet])
+  })
+})
+
+describe('a provider that only serves some types', () => {
+  it('is not asked for an episode when it only does movies', async () => {
+    // Mico-Leão Dublado's live manifest declares types: ["movie"]. Asking it
+    // for a series is a request spent to be told nothing.
+    const { plugin } = await load()
+    const { api, calls } = makeApi(plugin.manifest.hosts, answers({}))
+    await plugin.streams(EPISODE, api)
+
+    assert.ok(!hostsOf(calls).includes(MICOLEAO), 'it should have been skipped')
+    assert.ok(hostsOf(calls).includes(BRAZUCA), 'the ones without a limit still run')
+  })
+
+  it('is asked for a movie', async () => {
+    const { plugin } = await load()
+    const { api, calls } = makeApi(plugin.manifest.hosts, answers({}))
+    await plugin.streams(MOVIE, api)
+
+    assert.ok(hostsOf(calls).includes(MICOLEAO))
+  })
+})
+
+describe('addons that put seeders and size beside the title', () => {
+  it('folds them into the title, where the app looks', async () => {
+    // Mico-Leão Dublado's stream model carries `seeders` and `size` as
+    // top-level fields; parseStreamTitle only reads the 👤 and 💾 markers.
+    const { plugin } = await load()
+    const { api } = makeApi(plugin.manifest.hosts, answers({
+      [MICOLEAO]: body([{
+        title: 'Star Wars: Episode IX',
+        infoHash: 'e'.repeat(40),
+        seeders: 131,
+        size: 27831388078,
+      }]),
+    }))
+
+    const [stream] = plain(await plugin.streams(MOVIE, api))
+    assert.match(stream.title, /Star Wars/, 'the release name survives')
+    assert.match(stream.title, /👤 131/)
+    assert.match(stream.title, /💾 25\.92 GB/)
+  })
+
+  it('leaves a title that already carries the markers alone', async () => {
+    const { plugin } = await load()
+    const already = { title: 'X\n👤 9 💾 2 GB', infoHash: 'e'.repeat(40), seeders: 1, size: 5 }
+    const { api } = makeApi(plugin.manifest.hosts, answers({ [MICOLEAO]: body([already]) }))
+
+    assert.equal(plain(await plugin.streams(MOVIE, api))[0].title, already.title)
+  })
+
+  it('lets the dead-torrent filter finally see a zero it could not read before', async () => {
+    const { plugin } = await load()
+    const { api } = makeApi(plugin.manifest.hosts, answers({
+      [MICOLEAO]: body([{ title: 'Dead', infoHash: 'e'.repeat(40), seeders: 0, size: 100 }]),
+    }))
+
+    assert.deepEqual(plain(await plugin.streams(MOVIE, api)), [])
   })
 })
 
