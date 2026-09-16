@@ -26,7 +26,7 @@
 export const manifest = {
   id: 'juntos-torrent-sources',
   name: 'Torrentio + Brazuca + Comet + MediaFusion',
-  version: '3.1.0',
+  version: '3.2.0',
   // Every host this plugin may ever reach. The page compares the hostname of
   // each request against this list by exact equality, on the URL asked for and
   // again on the URL the answer came from, so a host added to PROVIDERS later
@@ -245,6 +245,46 @@ async function ask(api, mirror, type, id) {
   return (await fetchStreams(api, bare)) ?? []
 }
 
+/**
+ * Stremio deprecated `title` in favour of `description`, and the newer addons
+ * moved: Comet and MediaFusion describe a release in `description` and leave
+ * `title` unset. juntos.lol reads only `title` (`parseStreams` in
+ * web/src/catalog/streams.ts), so those rows arrive with no release name, no
+ * size, no seeder count and no language flags — and `streamResolution`, with
+ * nothing to read, files every one of them under `sd`.
+ *
+ * Copying one field to the other is the whole fix, and it has to happen here
+ * because the other side has no idea the field exists.
+ */
+function describe(stream) {
+  if (typeof stream.title === 'string' && stream.title !== '') return stream
+  if (typeof stream.description !== 'string' || stream.description === '') return stream
+  return { ...stream, title: stream.description }
+}
+
+/**
+ * `👤 0`, written out. Only a count that is actually legible counts: a stream
+ * that never says is never dropped.
+ */
+const SEEDERS = /👤\s*(\d+)/
+
+/**
+ * Drops a torrent that says, in its own description, that nobody is seeding it.
+ *
+ * juntos.lol reads torrent bytes from the swarm. No peers means no bytes, and
+ * what the host sees is not "no seeders" but a remux that dies on the first
+ * read — `Error: Assertion failed.` out of the parser, zero tracks, zero
+ * duration. That failure is indistinguishable, on screen, from a corrupt file.
+ *
+ * This matters most for Comet, which without a debrid account answers from
+ * cache indexes: hashes that a debrid service holds, which is not the same as
+ * hashes the open swarm still carries.
+ */
+function seeded(stream) {
+  const count = SEEDERS.exec(typeof stream.title === 'string' ? stream.title : '')
+  return count === null || Number(count[1]) > 0
+}
+
 const MAGNET_BTIH = /^magnet:\?.*\bxt=urn:btih:([0-9a-fA-F]{40})\b/
 
 /**
@@ -274,7 +314,8 @@ function dedupe(streams) {
   const out = []
   for (const raw of streams) {
     if (typeof raw !== 'object' || raw === null) continue
-    const stream = normalize(raw)
+    const stream = normalize(describe(raw))
+    if (!seeded(stream)) continue
     const key = typeof stream.infoHash === 'string'
       ? `${stream.infoHash.toLowerCase()}:${stream.fileIdx ?? ''}`
       : typeof stream.url === 'string' ? `url:${stream.url}` : null

@@ -80,6 +80,23 @@ respondem sem conta debrid, seria descartado em silêncio. O infohash está ali
 dentro do magnet; o plugin o move para o campo que o aplicativo lê. Sem isso,
 dois dos quatro provedores seriam decorativos.
 
+**`description` vira `title`.** O Stremio depreciou `title` em favor de
+`description`, e os addons novos migraram: o Comet e o MediaFusion descrevem o
+release em `description` e deixam `title` vazio. O juntos.lol lê só `title`,
+então essas linhas chegariam sem nome, sem tamanho, sem contagem de seeders e
+sem bandeira de idioma — e, sem nada para ler, o `streamResolution` jogaria
+todas elas no balde `sd`. Copiar um campo no outro é a correção inteira, e tem
+de acontecer aqui porque o outro lado não sabe que o campo existe.
+
+**Torrent sem seeder é descartado.** O juntos.lol lê os bytes do swarm: sem
+peer não há byte, e o que o host vê não é "sem seeders" e sim um remux que
+morre na primeira leitura — `Error: Assertion failed.`, zero faixas, zero
+duração, indistinguível na tela de um arquivo corrompido. Isso pesa mais no
+Comet, que sem conta debrid responde a partir de índices de cache: hashes que
+um serviço debrid guarda, o que não é a mesma coisa que hashes que o swarm
+aberto ainda carrega. Só é descartado o que **declara** `👤 0`; silêncio nunca
+conta como zero.
+
 **Degradação em vez de queda.** Se um addon recusar o caminho configurado — uma
 opção que mudou de nome, por exemplo —, o plugin pede de novo sem configuração
 nenhuma. Provedor fora do ar não derruba os outros; espelho fora do ar custa só

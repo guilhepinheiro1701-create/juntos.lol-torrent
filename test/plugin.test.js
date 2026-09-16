@@ -333,6 +333,60 @@ describe('mirrors, which are tried in order and not merged', () => {
   })
 })
 
+describe('addons that describe a release in the newer field', () => {
+  it('copies description into title, which is the only one the app reads', async () => {
+    // parseStreams in web/src/catalog/streams.ts reads stream.title and never
+    // stream.description. Comet and MediaFusion set only the latter, so their
+    // rows arrive with no name, no size, no seeders and no language flags.
+    const { plugin } = await load()
+    const { api } = makeApi(plugin.manifest.hosts, answers({
+      [COMET]: body([{
+        name: 'Comet',
+        description: 'Filme.2026.1080p.WEB-DL\n👤 12 💾 4.2 GB ⚙️ TorrentGalaxy\n🇧🇷',
+        infoHash: 'c'.repeat(40),
+      }]),
+    }))
+
+    const [stream] = plain(await plugin.streams(MOVIE, api))
+    assert.match(stream.title, /1080p/)
+    assert.match(stream.title, /👤 12/)
+  })
+
+  it('does not overwrite a title an addon already set', async () => {
+    const { plugin } = await load()
+    const both = { name: 'X', title: 'the real one', description: 'the other one', infoHash: 'c'.repeat(40) }
+    const { api } = makeApi(plugin.manifest.hosts, answers({ [COMET]: body([both]) }))
+
+    assert.equal(plain(await plugin.streams(MOVIE, api))[0].title, 'the real one')
+  })
+})
+
+describe('torrents nobody is seeding', () => {
+  it('drops one that says so, because no peers means no bytes', async () => {
+    // juntos.lol reads the bytes from the swarm. A dead torrent does not fail
+    // as "no seeders" — it fails as a remux that dies on the first read.
+    const { plugin } = await load()
+    const { api } = makeApi(plugin.manifest.hosts, answers({
+      [COMET]: body([
+        { name: 'Comet', description: 'Dead.1080p\n👤 0 💾 4 GB', infoHash: 'c'.repeat(40) },
+        { name: 'Comet', description: 'Alive.1080p\n👤 7 💾 4 GB', infoHash: 'd'.repeat(40) },
+      ]),
+    }))
+
+    const streams = plain(await plugin.streams(MOVIE, api))
+    assert.equal(streams.length, 1)
+    assert.match(streams[0].title, /Alive/)
+  })
+
+  it('keeps one that never says, because silence is not a zero', async () => {
+    const { plugin } = await load()
+    const quiet = { name: 'Brazuca', title: 'No counts here', infoHash: 'a'.repeat(40) }
+    const { api } = makeApi(plugin.manifest.hosts, answers({ [BRAZUCA]: body([quiet]) }))
+
+    assert.deepEqual(plain(await plugin.streams(MOVIE, api)), [quiet])
+  })
+})
+
 describe('deduplication', () => {
   it('keeps one row when both providers return the same torrent', async () => {
     const { plugin } = await load()
