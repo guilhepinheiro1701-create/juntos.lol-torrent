@@ -240,7 +240,9 @@ describe('streams that arrive as magnets', () => {
     const direct = { name: 'Direct', title: 'x', url: 'https://example.com/movie.mkv' }
     const { api } = makeApi(plugin.manifest.hosts, answers({ [COMET]: body([direct]) }))
 
-    assert.deepEqual(plain(await plugin.streams(MOVIE, api)), [direct])
+    const [stream] = plain(await plugin.streams(MOVIE, api))
+    assert.equal(stream.url, direct.url, 'an https url is not a magnet to unpack')
+    assert.equal(stream.infoHash, undefined)
   })
 
   it('dedupes a magnet against the same torrent seen as an infoHash', async () => {
@@ -372,7 +374,8 @@ describe('addons that describe a release in the newer field', () => {
     const both = { name: 'X', title: 'the real one', description: 'the other one', infoHash: 'c'.repeat(40) }
     const { api } = makeApi(plugin.manifest.hosts, answers({ [COMET]: body([both]) }))
 
-    assert.equal(plain(await plugin.streams(MOVIE, api))[0].title, 'the real one')
+    assert.match(plain(await plugin.streams(MOVIE, api))[0].title, /^the real one/)
+    assert.doesNotMatch(plain(await plugin.streams(MOVIE, api))[0].title, /the other one/)
   })
 })
 
@@ -398,7 +401,9 @@ describe('torrents nobody is seeding', () => {
     const quiet = { name: 'Brazuca', title: 'No counts here', infoHash: 'a'.repeat(40) }
     const { api } = makeApi(plugin.manifest.hosts, answers({ [BRAZUCA]: body([quiet]) }))
 
-    assert.deepEqual(plain(await plugin.streams(MOVIE, api)), [quiet])
+    const streams = plain(await plugin.streams(MOVIE, api))
+    assert.equal(streams.length, 1)
+    assert.equal(streams[0].infoHash, quiet.infoHash)
   })
 })
 
@@ -448,7 +453,9 @@ describe('addons that put seeders and size beside the title', () => {
     const already = { title: 'X\n👤 9 💾 2 GB', infoHash: 'e'.repeat(40), seeders: 1, size: 5 }
     const { api } = makeApi(plugin.manifest.hosts, answers({ [MICOLEAO]: body([already]) }))
 
-    assert.equal(plain(await plugin.streams(MOVIE, api))[0].title, already.title)
+    const { title } = plain(await plugin.streams(MOVIE, api))[0]
+    assert.match(title, /👤 9 💾 2 GB/, 'the numbers it already had are the numbers kept')
+    assert.doesNotMatch(title, /👤 1\b/)
   })
 
   it('lets the dead-torrent filter finally see a zero it could not read before', async () => {
@@ -535,6 +542,63 @@ describe('the indexer, which searches by text', () => {
     }))
 
     assert.deepEqual(plain(await plugin.streams(MOVIE, api)), [])
+  })
+})
+
+describe('saying which provider a row came from', () => {
+  it('stamps the provider when the addon named no source', async () => {
+    const { plugin } = await load()
+    const { api } = makeApi(plugin.manifest.hosts, answers({
+      [BRAZUCA]: body([{ title: 'DUBLADO DUAL ÁUDIO MKV 1080P', infoHash: 'a'.repeat(40) }]),
+    }))
+
+    const [stream] = plain(await plugin.streams(MOVIE, api))
+    assert.match(stream.title, /⚙️ Brazuca Torrents/)
+    // The marker only counts on the line parseStreamTitle picks as the stats
+    // line, which it finds by 👤 or 💾.
+    const statsLine = stream.title.split('\n').find((l) => l.includes('👤') || l.includes('💾'))
+    assert.ok(statsLine?.includes('⚙️ Brazuca Torrents'), `no usable stats line in ${stream.title}`)
+  })
+
+  it('does not overwrite a source the addon gave itself', async () => {
+    const { plugin } = await load()
+    const { api } = makeApi(plugin.manifest.hosts, answers({
+      [TORRENTIO]: body([{ title: 'X\n👤 5 💾 1 GB ⚙️ ThePirateBay', infoHash: 'b'.repeat(40) }]),
+    }))
+
+    const [stream] = plain(await plugin.streams(MOVIE, api))
+    assert.match(stream.title, /⚙️ ThePirateBay/)
+    assert.doesNotMatch(stream.title, /Torrentio/)
+  })
+
+  it('reads the size out of behaviorHints.videoSize', async () => {
+    const { plugin } = await load()
+    const { api } = makeApi(plugin.manifest.hosts, answers({
+      [BRAZUCA]: body([{
+        title: 'Um Filme',
+        infoHash: 'a'.repeat(40),
+        behaviorHints: { videoSize: 4509715660 },
+      }]),
+    }))
+
+    assert.match(plain(await plugin.streams(MOVIE, api))[0].title, /💾 4\.20 GB/)
+  })
+
+  it('takes the numbers from a description even when a title exists', async () => {
+    const { plugin } = await load()
+    const { api } = makeApi(plugin.manifest.hosts, answers({
+      [COMET]: body([{
+        title: 'Release.1080p',
+        description: 'Release.1080p\n👤 31 💾 3 GB',
+        infoHash: 'c'.repeat(40),
+      }]),
+    }))
+
+    const { title } = plain(await plugin.streams(MOVIE, api))[0]
+    assert.match(title, /👤 31/)
+    assert.match(title, /💾 3 GB/)
+    assert.equal(title.split('\n').filter((l) => l.includes('Release.1080p')).length, 1,
+      'the release name is not repeated into the label')
   })
 })
 

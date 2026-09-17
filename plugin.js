@@ -26,7 +26,7 @@
 export const manifest = {
   id: 'juntos-torrent-sources',
   name: 'Torrentio + Brazuca + Comet + MediaFusion',
-  version: '4.0.0',
+  version: '4.1.0',
   // Every host this plugin may ever reach. The page compares the hostname of
   // each request against this list by exact equality, on the URL asked for and
   // again on the URL the answer came from, so a host added to PROVIDERS later
@@ -367,9 +367,16 @@ async function ask(api, provider, mirror, ctx) {
  * because the other side has no idea the field exists.
  */
 function describe(stream) {
-  if (typeof stream.title === 'string' && stream.title !== '') return stream
-  if (typeof stream.description !== 'string' || stream.description === '') return stream
-  return { ...stream, title: stream.description }
+  const title = typeof stream.title === 'string' ? stream.title : ''
+  const description = typeof stream.description === 'string' ? stream.description : ''
+  if (description === '') return stream
+  if (title === '') return { ...stream, title: description }
+  if (title.includes('👤') || title.includes('💾')) return stream
+  // A title that is only a release name, next to a description that carries the
+  // numbers: take the marked lines and leave the prose, so the label does not
+  // end up saying the same thing twice.
+  const marked = description.split('\n').filter((line) => /👤|💾|⚙️/.test(line))
+  return marked.length === 0 ? stream : { ...stream, title: `${title}\n${marked.join(' ')}` }
 }
 
 /** Binary units, and the spelling `parseStreamTitle` knows how to read back. */
@@ -393,9 +400,13 @@ function humanSize(bytes) {
 function stats(stream) {
   const title = typeof stream.title === 'string' ? stream.title : ''
   if (title.includes('👤') || title.includes('💾')) return stream
+  const hints = typeof stream.behaviorHints === 'object' && stream.behaviorHints !== null
+    ? stream.behaviorHints
+    : {}
+  const bytes = [stream.size, hints.videoSize].find((v) => Number.isFinite(v) && v > 0)
   const parts = []
   if (Number.isFinite(stream.seeders)) parts.push(`👤 ${Math.trunc(stream.seeders)}`)
-  if (Number.isFinite(stream.size) && stream.size > 0) parts.push(`💾 ${humanSize(stream.size)}`)
+  if (bytes !== undefined) parts.push(`💾 ${humanSize(bytes)}`)
   if (parts.length === 0) return stream
   return { ...stream, title: title === '' ? parts.join(' ') : `${title}\n${parts.join(' ')}` }
 }
@@ -446,14 +457,40 @@ function normalize(stream) {
   return { ...rest, infoHash: magnet[1].toLowerCase() }
 }
 
+/**
+ * Stamps the provider onto a stream that did not name its own source.
+ *
+ * The app reads the source from the `⚙️` marker, and only on the line that
+ * also carries `👤` or `💾` — `parseStreamTitle` finds the stats line first and
+ * reads everything else out of it. So when an addon gives no numbers at all,
+ * the marker needs a line of its own with a bare `💾` on it: the size pattern
+ * wants digits and finds none, which leaves the size empty and the source set.
+ *
+ * Worth the trouble because a row that cannot say where it came from is a row
+ * nobody can debug — including me, looking at a screenshot of it.
+ */
+function attribute(stream, provider) {
+  const title = typeof stream.title === 'string' ? stream.title : ''
+  if (title.includes('⚙️')) return stream
+  const lines = title === '' ? [] : title.split('\n')
+  const at = lines.findIndex((line) => line.includes('👤') || line.includes('💾'))
+  if (at >= 0) lines[at] = `${lines[at]} ⚙️ ${provider}`
+  else lines.push(`💾 ⚙️ ${provider}`)
+  return { ...stream, title: lines.join('\n') }
+}
+
+/** Everything one raw stream goes through, or null when it is not usable. */
+function refine(raw, provider) {
+  if (typeof raw !== 'object' || raw === null) return null
+  const stream = normalize(attribute(stats(describe(raw)), provider))
+  return seeded(stream) ? stream : null
+}
+
 /** Same torrent from two providers is one row; the first spelling of it wins. */
 function dedupe(streams) {
   const seen = new Set()
   const out = []
-  for (const raw of streams) {
-    if (typeof raw !== 'object' || raw === null) continue
-    const stream = normalize(stats(describe(raw)))
-    if (!seeded(stream)) continue
+  for (const stream of streams) {
     const key = typeof stream.infoHash === 'string'
       ? `${stream.infoHash.toLowerCase()}:${stream.fileIdx ?? ''}`
       : typeof stream.url === 'string' ? `url:${stream.url}` : null
@@ -500,9 +537,10 @@ export async function streams(target, api) {
     : null
   const ctx = { type, id, title: typeof title === 'string' ? title : '' }
 
-  const answers = await Promise.all(
-    asking.map((provider) => askProvider(api, provider, ctx, remaining)),
-  )
+  const answers = await Promise.all(asking.map(async (provider) => {
+    const found = await askProvider(api, provider, ctx, remaining)
+    return found.map((raw) => refine(raw, provider.name)).filter((stream) => stream !== null)
+  }))
   // Concatenated in PROVIDERS order, because that order is what a viewer reads.
   return dedupe(answers.flat())
 }

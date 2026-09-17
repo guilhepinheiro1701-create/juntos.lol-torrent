@@ -102,6 +102,22 @@ como campos de topo — `seeders` e `size` no modelo dele —, e o
 Os números estavam no payload e a linha aparecia sem eles; dobrá-los no título
 resolve, e de quebra é o que permite ao filtro abaixo enxergar um zero.
 
+**Toda linha diz de onde veio.** O juntos.lol lê a fonte do marcador `⚙️`, e
+só na linha que também traz `👤` ou `💾` — o `parseStreamTitle` acha a linha de
+estatísticas primeiro e lê todo o resto de dentro dela. Quando um addon não dá
+número nenhum, o plugin escreve uma linha própria com um `💾` sem dígito: o
+padrão de tamanho não casa e fica vazio, e a fonte fica preenchida. Vale o
+trabalho porque uma linha que não sabe dizer de onde veio é uma linha que
+ninguém consegue depurar — inclusive eu, olhando uma captura de tela dela.
+
+Fonte que o addon já declarou não é sobrescrita: o `⚙️ ThePirateBay` do
+Torrentio continua sendo o tracker, não o nome do provedor.
+
+**Tamanho também vem de `behaviorHints.videoSize`**, que é o campo padrão do
+Stremio para isso, além do `size` de topo. E quando o título traz só o nome do
+release e a `description` traz os números, são extraídas dela apenas as linhas
+marcadas — a prosa fica de fora, para o label não repetir o mesmo texto.
+
 **Torrent sem seeder é descartado.** O juntos.lol lê os bytes do swarm: sem
 peer não há byte, e o que o host vê não é "sem seeders" e sim um remux que
 morre na primeira leitura — `Error: Assertion failed.`, zero faixas, zero
