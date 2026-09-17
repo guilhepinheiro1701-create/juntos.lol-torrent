@@ -26,7 +26,7 @@
 export const manifest = {
   id: 'juntos-torrent-sources',
   name: 'Torrentio + Brazuca + Comet + MediaFusion',
-  version: '4.2.0',
+  version: '4.3.0',
   // Every host this plugin may ever reach. The page compares the hostname of
   // each request against this list by exact equality, on the URL asked for and
   // again on the URL the answer came from, so a host added to PROVIDERS later
@@ -115,8 +115,8 @@ const MEDIAFUSION_CONFIG = 'D-3-608kLJEnktYCZcSiuvZIMiNNDrOYf7BWbYrM5LzlyqZYMVQ1
 
 /**
  * felipemarinho97/torrent-indexer: a Go service that scrapes the Brazilian
- * release sites directly — bludv, comando, rede-torrent, vaca-torrent — and
- * serves the result as JSON. It is not a Stremio addon, so it needs a URL of
+ * release sites directly — bludv, comando, rede-torrent, vaca-torrent,
+ * starck-filmes and torrent-dos-filmes — and serves the result as JSON. It is not a Stremio addon, so it needs a URL of
  * its own and an adapter on the way back.
  *
  * This is the author's public test instance. Point it at your own
@@ -238,6 +238,10 @@ const PROVIDERS = [
   },
   indexerProvider('bludv', 'BluDV'),
   indexerProvider('comando_torrents', 'Comando'),
+  indexerProvider('rede_torrent', 'Rede Torrent'),
+  indexerProvider('vaca_torrent', 'Vaca Torrent'),
+  indexerProvider('starck-filmes', 'Starck Filmes'),
+  indexerProvider('torrent-dos-filmes', 'Torrent dos Filmes'),
   {
     name: 'Torrentio',
     mirrors: [

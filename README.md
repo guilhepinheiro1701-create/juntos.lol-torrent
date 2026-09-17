@@ -29,7 +29,7 @@ realmente importa — **os hosts que ele vai alcançar**:
 | --- | --- |
 | `94c8cb9f702d-brazuca-torrents.baby-beamup.club` | Brazuca Torrents |
 | `27a5b2bfe3c0-stremio-brazilian-addon.baby-beamup.club` | Mico-Leão Dublado (só filmes) |
-| `torrent-indexer.darklyn.org` | torrent-indexer (BluDV e Comando) |
+| `torrent-indexer.darklyn.org` | torrent-indexer (6 sites BR) |
 | `v3-cinemeta.strem.io` | Cinemeta, só para virar o id do IMDb em título |
 | `torrentio.strem.fun` | Torrentio |
 | `torrentio.elfhosted.com` | Torrentio (espelho) |
@@ -149,15 +149,15 @@ a vez dele.
 **Orçamento.** O juntos.lol dá a cada resolução 15 segundos e 32 requisições, e
 mata o worker quando um dos dois acaba. Cada salto pelo servidor pode levar até
 10 segundos sozinho. Os provedores são perguntados em paralelo, cada um com um
-relógio menor que o do host. Medido: dez requisições num filme e nove
-num episódio quando tudo responde, quinze no pior caso.
+relógio menor que o do host. Medido: catorze requisições num filme e treze
+num episódio quando tudo responde, dezenove no pior caso.
 
 ## O indexador, que é de outra natureza
 
 Os cinco addons devolvem streams prontos. O
 [torrent-indexer](https://github.com/felipemarinho97/torrent-indexer) é outra
 coisa: um serviço em Go que **raspa os sites de release brasileiros** —
-bludv, comando, rede-torrent, vaca-torrent e outros — e serve o resultado como
+bludv, comando, rede-torrent, vaca-torrent, starck-filmes e torrent-dos-filmes — e serve o resultado como
 JSON. Não é addon do Stremio, então tem URL própria e um adaptador na volta.
 
 **Ele busca por texto, e um plugin recebe um id do IMDb e mais nada.** Por isso
@@ -181,6 +181,33 @@ fazer.
 > cair, limitar ou sumir. Subir a sua é um `docker compose up` no repositório
 > dele, e aí é só trocar a constante: você ganha o cache, a velocidade e para
 > de depender do servidor de outra pessoa.
+
+### Por que a raspagem mora no servidor, e não no worker
+
+O torrent-indexer faz, em Go, o mesmo que o Jackett: baixa a página HTML do
+site, aplica seletores CSS sobre o DOM e extrai o magnet. **Essa lógica não
+cabe dentro do worker do plugin**, e é útil registrar por quê — foram quatro
+paredes, cada uma verificada no código do juntos.lol:
+
+1. **Não há DOM.** O escopo do worker (`web/src/plugins/worker.ts`) é podado a
+   uma allowlist que não tem `DOMParser` nem `document`. Seletor CSS — todo o
+   mecanismo do Jackett, que usa o AngleSharp — não tem sobre o que rodar.
+   Sobraria regex sobre HTML cru, que não é a mesma coisa.
+2. **`api.fetch` é só GET, sem cabeçalho.** As definições do Jackett mandam
+   `Authorization: Bearer`, cookies de login, User-Agent próprio. O worker não
+   envia nenhum deles.
+3. **IP de datacenter + Cloudflare.** Toda requisição do worker sai do servidor
+   do juntos.lol. Os sites BR ficam atrás do Cloudflare, e o próprio Jackett
+   precisa do FlareSolverr (um navegador headless) para passar. O worker não
+   roda navegador.
+4. **Orçamento.** O Jackett faz página de busca → uma página de detalhe por
+   resultado para pegar cada magnet. É 1+N raspagens ao vivo de sites lentos,
+   contra 15s e 32 requisições.
+
+Por isso a raspagem fica onde ela funciona — num serviço à parte — e o plugin
+a consome como JSON. O torrent-indexer é esse serviço, e cobre justamente os
+sites públicos BR que já saíram das definições do Jackett (lá sobraram só
+trackers privados, que pedem conta e API key).
 
 ## Dois addons que ficaram de fora
 

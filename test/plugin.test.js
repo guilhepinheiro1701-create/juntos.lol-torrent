@@ -491,7 +491,7 @@ describe('the indexer, which searches by text', () => {
     assert.equal(new URL(lookup).pathname, '/meta/movie/tt0111161.json')
 
     const search = calls.filter((url) => url.includes(INDEXER))
-    assert.equal(search.length, 2, 'one per indexer site')
+    assert.equal(search.length, 6, 'one per indexer site')
     assert.equal(new URL(search[0]).searchParams.get('q'), 'Um Novo Dia')
     assert.ok(streams.some((s) => s.infoHash === 'f'.repeat(40)))
   })
