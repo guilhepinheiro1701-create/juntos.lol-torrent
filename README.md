@@ -118,6 +118,20 @@ Stremio para isso, além do `size` de topo. E quando o título traz só o nome d
 release e a `description` traz os números, são extraídas dela apenas as linhas
 marcadas — a prosa fica de fora, para o label não repetir o mesmo texto.
 
+**Release com TrueHD ou Atmos é descartado.** O worker do juntos.lol monta o
+plano do FFmpeg a partir de uma matriz de áudio que conhece aac, ac3, eac3,
+dts, dca, opus, flac, mp3 e vorbis — e **não conhece truehd**. O teste
+`refuses_unlisted_codecs_clearly`, em `ss-worker/ss-remux/src/plan.rs`, afirma
+isso. A matriz é consultada por faixa com `?`, então **uma faixa fora da lista
+derruba o plano inteiro**: um DUAL cujo dublado é AC-3 comum falha mesmo assim,
+por causa da faixa original.
+
+O que o host vê nesse caso é `remote remux failed` sem razão nenhuma, depois de
+minutos baixando — o servidor guarda a mensagem real só no log dele. Descartar
+essas linhas aqui custa uma opção que ninguém conseguiria tocar e poupa a
+viagem inteira. DTS fica de fora da lista de propósito: a matriz aceita e
+converte.
+
 **Torrent sem seeder é descartado.** O juntos.lol lê os bytes do swarm: sem
 peer não há byte, e o que o host vê não é "sem seeders" e sim um remux que
 morre na primeira leitura — `Error: Assertion failed.`, zero faixas, zero

@@ -602,6 +602,49 @@ describe('saying which provider a row came from', () => {
   })
 })
 
+describe('releases the worker cannot prepare', () => {
+  const withTitle = (title) => ({ title, infoHash: 'a'.repeat(40) })
+
+  it('drops TrueHD, which the worker has no matrix entry for', async () => {
+    // ss-worker/ss-remux/src/plan.rs asserts this in its own test:
+    // refuses_unlisted_codecs_clearly. One unlisted track kills the plan, so a
+    // dual-audio release whose dub is AC-3 still fails on the original track.
+    const { plugin } = await load()
+    const { api } = makeApi(plugin.manifest.hosts, answers({
+      [BRAZUCA]: body([withTitle('The.Movie.2160p.UHD.BluRay.TrueHD.7.1.Atmos-GRP')]),
+    }))
+
+    assert.deepEqual(plain(await plugin.streams(MOVIE, api)), [])
+  })
+
+  it('drops Atmos spelled on its own', async () => {
+    const { plugin } = await load()
+    const { api } = makeApi(plugin.manifest.hosts, answers({
+      [BRAZUCA]: body([withTitle('The.Movie.2160p.ATMOS.DUAL-GRP')]),
+    }))
+
+    assert.deepEqual(plain(await plugin.streams(MOVIE, api)), [])
+  })
+
+  it('keeps DTS, which the matrix converts', async () => {
+    const { plugin } = await load()
+    const { api } = makeApi(plugin.manifest.hosts, answers({
+      [BRAZUCA]: body([withTitle('The.Movie.1080p.BluRay.DTS-HD.MA.5.1-GRP')]),
+    }))
+
+    assert.equal(plain(await plugin.streams(MOVIE, api)).length, 1)
+  })
+
+  it('keeps an ordinary dual-audio release', async () => {
+    const { plugin } = await load()
+    const { api } = makeApi(plugin.manifest.hosts, answers({
+      [BRAZUCA]: body([withTitle('The.Movie.2012.1080p.BluRay.x264.DUAL.AC3-GRP')]),
+    }))
+
+    assert.equal(plain(await plugin.streams(MOVIE, api)).length, 1)
+  })
+})
+
 describe('deduplication', () => {
   it('keeps one row when both providers return the same torrent', async () => {
     const { plugin } = await load()

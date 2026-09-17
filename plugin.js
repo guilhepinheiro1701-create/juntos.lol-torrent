@@ -26,7 +26,7 @@
 export const manifest = {
   id: 'juntos-torrent-sources',
   name: 'Torrentio + Brazuca + Comet + MediaFusion',
-  version: '4.1.0',
+  version: '4.2.0',
   // Every host this plugin may ever reach. The page compares the hostname of
   // each request against this list by exact equality, on the URL asked for and
   // again on the URL the answer came from, so a host added to PROVIDERS later
@@ -479,11 +479,36 @@ function attribute(stream, provider) {
   return { ...stream, title: lines.join('\n') }
 }
 
+/**
+ * Codecs the juntos.lol worker cannot plan, spelled the way release names
+ * spell them.
+ *
+ * The worker builds its FFmpeg plan from an `audio_action` matrix that knows
+ * aac, ac3, eac3, dts, dca, opus, flac, mp3 and vorbis — and **not truehd**.
+ * Its own test says so (`refuses_unlisted_codecs_clearly`, in
+ * ss-worker/ss-remux/src/plan.rs). One unlisted track kills the whole plan,
+ * because the matrix is consulted per stream with `?`: a release whose
+ * Portuguese dub is plain AC-3 still fails when the original track is TrueHD.
+ *
+ * What the host sees when that happens is "remote remux failed" with no
+ * reason, after minutes of downloading — the server keeps the real message in
+ * its own log. Dropping these here costs a row nobody could have played and
+ * saves that whole trip.
+ *
+ * DTS is deliberately not on this list: the matrix takes it and converts.
+ */
+const UNPLAYABLE_AUDIO = /\btrue[\s._-]?hd\b|\batmos\b/i
+
+/** False when the release name says it carries audio the worker will refuse. */
+function preparable(stream) {
+  return !UNPLAYABLE_AUDIO.test(typeof stream.title === 'string' ? stream.title : '')
+}
+
 /** Everything one raw stream goes through, or null when it is not usable. */
 function refine(raw, provider) {
   if (typeof raw !== 'object' || raw === null) return null
   const stream = normalize(attribute(stats(describe(raw)), provider))
-  return seeded(stream) ? stream : null
+  return seeded(stream) && preparable(stream) ? stream : null
 }
 
 /** Same torrent from two providers is one row; the first spelling of it wins. */
