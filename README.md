@@ -1,7 +1,8 @@
 # Fontes de torrent para o juntos.lol
 
 Plugin que liga cinco addons do Stremio — **Brazuca Torrents**,
-**Mico-Leão Dublado**, **Torrentio**, **Comet** e **MediaFusion** — ao
+**Mico-Leão Dublado**, **Torrentio**, **Comet** e **MediaFusion** — mais o
+indexador **torrent-indexer**, que raspa os sites de release brasileiros, ao
 [juntos.lol](https://juntos.lol), e serve de ponte para qualquer outro que fale
 o mesmo protocolo.
 
@@ -28,13 +29,15 @@ realmente importa — **os hosts que ele vai alcançar**:
 | --- | --- |
 | `94c8cb9f702d-brazuca-torrents.baby-beamup.club` | Brazuca Torrents |
 | `27a5b2bfe3c0-stremio-brazilian-addon.baby-beamup.club` | Mico-Leão Dublado (só filmes) |
+| `torrent-indexer.darklyn.org` | torrent-indexer (BluDV e Comando) |
+| `v3-cinemeta.strem.io` | Cinemeta, só para virar o id do IMDb em título |
 | `torrentio.strem.fun` | Torrentio |
 | `torrentio.elfhosted.com` | Torrentio (espelho) |
 | `comet.elfhosted.com` | Comet |
 | `comet.feels.legal` | Comet (espelho) |
 | `mediafusion.elfhosted.com` | MediaFusion |
 
-Esses sete são tudo que este plugin consegue pedir. O juntos.lol confere cada
+Esses nove são tudo que este plugin consegue pedir. O juntos.lol confere cada
 requisição contra essa lista por igualdade exata de hostname, tanto na URL
 pedida quanto na URL onde a resposta chegou, então um redirecionamento para
 fora da lista é barrado igual.
@@ -61,7 +64,7 @@ seeders e bandeiras de idioma são interpretados do outro lado, em
 `web/src/catalog/streams.ts`, onde esse parsing já tem teste. O que este plugin
 acrescenta é o que o outro lado não tem como fazer.
 
-**Cinco provedores, fundidos.** Acervos diferentes, então todos são
+**Sete provedores, fundidos.** Acervos diferentes, então todos são
 perguntados de uma vez e as respostas unidas, sem repetir: um torrent que dois
 conhecem vira uma linha só.
 
@@ -116,8 +119,56 @@ a vez dele.
 **Orçamento.** O juntos.lol dá a cada resolução 15 segundos e 32 requisições, e
 mata o worker quando um dos dois acaba. Cada salto pelo servidor pode levar até
 10 segundos sozinho. Os provedores são perguntados em paralelo, cada um com um
-relógio menor que o do host. No caminho feliz são cinco requisições num filme e
-quatro num episódio; no pior caso, com tudo fora do ar, doze e onze.
+relógio menor que o do host. Medido: dez requisições num filme e nove
+num episódio quando tudo responde, quinze no pior caso.
+
+## O indexador, que é de outra natureza
+
+Os cinco addons devolvem streams prontos. O
+[torrent-indexer](https://github.com/felipemarinho97/torrent-indexer) é outra
+coisa: um serviço em Go que **raspa os sites de release brasileiros** —
+bludv, comando, rede-torrent, vaca-torrent e outros — e serve o resultado como
+JSON. Não é addon do Stremio, então tem URL própria e um adaptador na volta.
+
+**Ele busca por texto, e um plugin recebe um id do IMDb e mais nada.** Por isso
+há uma consulta ao Cinemeta antes do leque abrir: uma só, compartilhada pelos
+dois indexadores, e cobrada apenas quando algum deles está em jogo. Sem título,
+eles são pulados inteiros — gastar a requisição só compraria um 400.
+
+**Sem os filtros `imdb=` e `year=`.** Eles existem na API, mas o `FilterBy` do
+indexador descarta toda entrada cujo campo o raspador não conseguiu preencher —
+e frequentemente não consegue, porque depende de achar um link do IMDb na
+página. Custariam muito mais recall do que a precisão que trazem. A busca por
+título já é o filtro.
+
+**Séries funcionam por acaso feliz.** Os sites brasileiros publicam temporada
+inteira, e a busca devolve o pacote; o `pickStreamFile` do juntos.lol já sabe
+achar o episódio dentro dele pelo padrão `S01E02`. Não há nada de especial a
+fazer.
+
+> `INDEXER_BASE` aponta para `torrent-indexer.darklyn.org`, que é a **instância
+> pública de teste do autor** — infraestrutura de terceiro, gratuita, que pode
+> cair, limitar ou sumir. Subir a sua é um `docker compose up` no repositório
+> dele, e aí é só trocar a constante: você ganha o cache, a velocidade e para
+> de depender do servidor de outra pessoa.
+
+## Dois addons que ficaram de fora
+
+O [GuIndex](https://github.com/GuickerZ/guindex) e o
+[BRASIL-RD-ADDON](https://github.com/onikopolar/BRASIL-RD-ADDON) foram
+examinados e **não entraram: os dois exigem conta debrid paga.** O GuIndex
+marca `configurationRequired` sem chave de Real-Debrid ou TorBox; o
+BRASIL-RD-ADDON pede a API Key do Torbox no próprio painel. Sem conta, não
+devolvem nada.
+
+Vale saber para o futuro: se você assinar um debrid, eles passam a ser as
+melhores fontes possíveis para o juntos.lol — porque entregam **link HTTPS
+direto**, e o `readLocation` aceita isso. Um link desses não depende de swarm
+nenhum, que é exatamente o problema que derrubou o Comet.
+
+De quebra, o GuIndex foi útil de outro jeito: ele já consome esse mesmo
+torrent-indexer, e ler o `torrent-indexer-provider.ts` dele confirmou o
+desenho — resolver o título no Cinemeta antes de buscar.
 
 ## Configuração de cada provedor
 
@@ -125,6 +176,7 @@ quatro num episódio; no pior caso, com tudo fora do ar, doze e onze.
 | --- | --- |
 | **Brazuca Torrents** | Não aceita opções. Caminho simples. |
 | **Mico-Leão Dublado** | Não aceita opções. Só filmes. |
+| **torrent-indexer** | `INDEXER_BASE`. Busca por título, resolvido no Cinemeta. |
 | **Torrentio** | Opções num segmento do caminho, montado em `TORRENTIO_CONFIG`. |
 | **Comet** | base64url de um JSON, montado pelo próprio plugin em `COMET_CONFIG`. |
 | **MediaFusion** | Segmento cifrado, gerado no `/configure` da instância e colado em `MEDIAFUSION_CONFIG`. Veja abaixo. |
@@ -227,7 +279,7 @@ que os testes exercitam.
 Os endereços, a gramática de URL de cada addon e a grafia das opções foram
 conferidos contra o uso real em dezenas de projetos independentes, não contra os
 serviços: o ambiente em que este plugin foi escrito não tem saída para esses
-hosts. Então **não está confirmado que os sete respondem hoje**.
+hosts. Então **não está confirmado que os nove respondem hoje**.
 
 A exceção é o MediaFusion, que virou o mais certo dos quatro: a configuração em
 `MEDIAFUSION_CONFIG` foi gerada na própria instância, o que prova que ela

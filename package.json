@@ -2,7 +2,7 @@
   "name": "juntos-lol-torrentio",
   "version": "3.1.0",
   "private": true,
-  "description": "Fontes de torrent (Brazuca, Torrentio, Comet, MediaFusion) para o juntos.lol",
+  "description": "Fontes de torrent brasileiras (addons Stremio + torrent-indexer) para o juntos.lol",
   "type": "module",
   "license": "MIT",
   "scripts": {

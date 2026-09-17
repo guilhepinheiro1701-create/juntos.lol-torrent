@@ -16,6 +16,8 @@ const COMET = 'comet.elfhosted.com'
 const COMET_MIRROR = 'comet.feels.legal'
 const MEDIAFUSION = 'mediafusion.elfhosted.com'
 const MICOLEAO = '27a5b2bfe3c0-stremio-brazilian-addon.baby-beamup.club'
+const INDEXER = 'torrent-indexer.darklyn.org'
+const CINEMETA = 'v3-cinemeta.strem.io'
 
 const MOVIE = { type: 'movie', id: 'tt0111161' }
 const EPISODE = { type: 'series', id: 'tt0903747', season: 5, episode: 14 }
@@ -40,6 +42,12 @@ const body = (streams) => ({ status: 200, body: JSON.stringify({ streams }) })
  * bare-path retry into a count the test is trying to assert.
  */
 const answers = (map) => (url) => map[new URL(url).hostname] ?? body([])
+
+/** Cinemeta's reply, which is what turns an IMDb id into a searchable title. */
+const named = (name) => ({ status: 200, body: JSON.stringify({ meta: { name } }) })
+
+/** Hosts that speak the Stremio stream protocol — everything but the lookup. */
+const addonHosts = (calls) => calls.filter((url) => !url.includes(CINEMETA))
 
 const hostsOf = (calls) => calls.map((url) => new URL(url).hostname)
 
@@ -112,8 +120,12 @@ describe('resolving a title', () => {
     const streams = plain(await plugin.streams(MOVIE, api))
 
     assert.equal(streams.length, 5)
-    // One request per provider, and no reason to have touched either mirror.
-    assert.deepEqual(hostsOf(calls).sort(), [BRAZUCA, COMET, MEDIAFUSION, MICOLEAO, TORRENTIO].sort())
+    // One request per provider, no reason to have touched either mirror, and
+    // one lookup — which came back without a name, so the indexers, which have
+    // nothing to search with, were never asked.
+    assert.deepEqual(hostsOf(calls).sort(), [
+      BRAZUCA, CINEMETA, COMET, MEDIAFUSION, MICOLEAO, TORRENTIO,
+    ].sort())
   })
 
   it('puts Brazuca first, because that is the order on screen', async () => {
@@ -133,8 +145,9 @@ describe('resolving a title', () => {
     const { api, calls } = makeApi(plugin.manifest.hosts, answers({}))
     await plugin.streams(EPISODE, api)
 
-    assert.ok(calls.length > 0)
-    for (const url of calls) {
+    const asked = addonHosts(calls)
+    assert.ok(asked.length > 0)
+    for (const url of asked) {
       assert.ok(url.endsWith('/stream/series/tt0903747:5:14.json'), url)
     }
   })
@@ -330,7 +343,7 @@ describe('mirrors, which are tried in order and not merged', () => {
     // bare-path retry anywhere: one request per mirror, and every mirror gets
     // its turn because no mirror had anything.
     assert.deepEqual(hostsOf(calls).sort(), [
-      BRAZUCA, COMET, COMET_MIRROR, ELFHOSTED, MEDIAFUSION, MICOLEAO, TORRENTIO,
+      BRAZUCA, CINEMETA, COMET, COMET_MIRROR, ELFHOSTED, MEDIAFUSION, MICOLEAO, TORRENTIO,
     ].sort())
   })
 })
@@ -442,6 +455,83 @@ describe('addons that put seeders and size beside the title', () => {
     const { plugin } = await load()
     const { api } = makeApi(plugin.manifest.hosts, answers({
       [MICOLEAO]: body([{ title: 'Dead', infoHash: 'e'.repeat(40), seeders: 0, size: 100 }]),
+    }))
+
+    assert.deepEqual(plain(await plugin.streams(MOVIE, api)), [])
+  })
+})
+
+describe('the indexer, which searches by text', () => {
+  const RESULT = {
+    title: 'Filme.Dublado.2026.1080p.WEB-DL',
+    original_title: 'The Movie',
+    info_hash: 'F'.repeat(40),
+    magnet_link: 'magnet:?xt=urn:btih:' + 'f'.repeat(40),
+    size: '4.2 GB',
+    seed_count: 23,
+    audio: ['Português', 'Inglês'],
+  }
+
+  it('turns the IMDb id into a title first, then searches with it', async () => {
+    const { plugin } = await load()
+    const { api, calls } = makeApi(plugin.manifest.hosts, answers({
+      [CINEMETA]: named('Um Novo Dia'),
+      [INDEXER]: { status: 200, body: JSON.stringify({ results: [RESULT], count: 1 }) },
+    }))
+    const streams = plain(await plugin.streams(MOVIE, api))
+
+    const lookup = calls.find((url) => url.includes(CINEMETA))
+    assert.equal(new URL(lookup).pathname, '/meta/movie/tt0111161.json')
+
+    const search = calls.filter((url) => url.includes(INDEXER))
+    assert.equal(search.length, 2, 'one per indexer site')
+    assert.equal(new URL(search[0]).searchParams.get('q'), 'Um Novo Dia')
+    assert.ok(streams.some((s) => s.infoHash === 'f'.repeat(40)))
+  })
+
+  it('is skipped entirely when no title comes back', async () => {
+    // Without a name there is nothing to search with, so spending the request
+    // would only buy a 400.
+    const { plugin } = await load()
+    const { api, calls } = makeApi(plugin.manifest.hosts, answers({}))
+    await plugin.streams(MOVIE, api)
+
+    assert.ok(!hostsOf(calls).includes(INDEXER))
+  })
+
+  it('writes seeders, size and site where parseStreamTitle looks', async () => {
+    const { plugin } = await load()
+    const { api } = makeApi(plugin.manifest.hosts, answers({
+      [CINEMETA]: named('Um Filme'),
+      [INDEXER]: { status: 200, body: JSON.stringify({ results: [RESULT] }) },
+    }))
+
+    const [stream] = plain(await plugin.streams(MOVIE, api))
+    assert.match(stream.title, /Filme\.Dublado/)
+    assert.match(stream.title, /👤 23/)
+    assert.match(stream.title, /💾 4\.2 GB/)
+    assert.match(stream.title, /⚙️ (BluDV|Comando)/)
+    assert.match(stream.title, /🇧🇷/, 'Português in the audio tags becomes a flag')
+  })
+
+  it('falls back to the magnet when the indexer has no info_hash', async () => {
+    const { plugin } = await load()
+    const { [`info_hash`]: _drop, ...noHash } = RESULT
+    const { api } = makeApi(plugin.manifest.hosts, answers({
+      [CINEMETA]: named('Um Filme'),
+      [INDEXER]: { status: 200, body: JSON.stringify({ results: [noHash] }) },
+    }))
+
+    // normalize() pulls the hash out of the magnet on the way through.
+    const [stream] = plain(await plugin.streams(MOVIE, api))
+    assert.equal(stream.infoHash, 'f'.repeat(40))
+  })
+
+  it('drops a result carrying neither a hash nor a magnet', async () => {
+    const { plugin } = await load()
+    const { api } = makeApi(plugin.manifest.hosts, answers({
+      [CINEMETA]: named('Um Filme'),
+      [INDEXER]: { status: 200, body: JSON.stringify({ results: [{ title: 'nada' }] }) },
     }))
 
     assert.deepEqual(plain(await plugin.streams(MOVIE, api)), [])

@@ -26,7 +26,7 @@
 export const manifest = {
   id: 'juntos-torrent-sources',
   name: 'Torrentio + Brazuca + Comet + MediaFusion',
-  version: '3.3.0',
+  version: '4.0.0',
   // Every host this plugin may ever reach. The page compares the hostname of
   // each request against this list by exact equality, on the URL asked for and
   // again on the URL the answer came from, so a host added to PROVIDERS later
@@ -40,6 +40,8 @@ export const manifest = {
     'comet.feels.legal',
     'mediafusion.elfhosted.com',
     '27a5b2bfe3c0-stremio-brazilian-addon.baby-beamup.club',
+    'torrent-indexer.darklyn.org',
+    'v3-cinemeta.strem.io',
   ],
   updateUrl: 'https://github.com/guilhepinheiro1701-create/juntos.lol-torrent',
 }
@@ -112,6 +114,92 @@ const COMET_CONFIG = base64url({ debridService: 'torrent' })
 const MEDIAFUSION_CONFIG = 'D-3-608kLJEnktYCZcSiuvZIMiNNDrOYf7BWbYrM5LzlyqZYMVQ1ngmr9_3rF2aozyN7JmYyPiw2H33J11vWp2v8w6bkrW6f9l9kGIhpLm31fPwae3uqILuQApT0xToo4fGQAKu8p23hqjSz8t5dsT5X_jERG0fvOcOQGRW0WhrqjP2k7YLgs06SPDDTiBMRrJbzRNeP8u7k1yhMMyc4St1H_6WuupMh3eN98b-E2ngSGSqaPIEmE9647ibejzxV7PxXavlfDK5qstRE6G9PUk9GIee9FAJ-7HhOwaUhLJUliuTnqCTYaSXrNjrOQgG-gIockR9QV_nyYwoejbt3c8gmnCfDPonfqfKd9qYjZc9y4bxpqGkGpAJQz9zt1Qn15lamIlfwXFf1enLJQdaTQgexi9YHa6YoxQYZa3V2KljMhiBSsybcG1W70yXCwq6K6kVlzHYaR11GJcMsPi8zTlBNRWs2sKtVcBvazFiM1tThfbFLVVPlB9SX9PXbYT8xf3ZQNA0Fr3Ck2pTvvpD3v48hXf0r2Fz0fM4gThfCGrczELFitFCs1SU-N-hGriflKt8LRNVxYS2lb-ECs7oJNdbgFySGCUvhnSDzeSEtVKivgSWru1wki6oR90sWGOHwvGmQuLUC0mluI-DeMdNHYLROUJc_ZcG7pfjmMHlV-k5__beEVGqDCetHOdaIBvPQDAABm0_0_EPDgTnQqFAZ-L4vdvGV2AFIIq86rF_zE2xgZeXtPBTK6BkhvyTE9BVg2Vv_EZ9M3E55hCkADHLXDNcFqQ9jJ91pQKLFApPk75eJhIzvnQhZLnTnXVVq97ZSFZYemCa95OgzO-W4CorrB5DXVXgIWivkcOaFxLzDExDdVZVvfP_dZKt1PpmcUSpJQAMLkloTsA0Ok-u01MoDJhS-SZ_l0EjfcPYAwXk3RFylkn3wi5RH5l1nqtcFCLy-sxVftAWYqqCu9tZRJtlm-VDzSs-PRjBWtqeZhI9HkuSR2bt_JBnS6rhsY_CBYfycJp7kUuqGJdkLTC00MIxggxUg'
 
 /**
+ * felipemarinho97/torrent-indexer: a Go service that scrapes the Brazilian
+ * release sites directly — bludv, comando, rede-torrent, vaca-torrent — and
+ * serves the result as JSON. It is not a Stremio addon, so it needs a URL of
+ * its own and an adapter on the way back.
+ *
+ * This is the author's public test instance. Point it at your own
+ * (`docker compose up` on that repository) and you get its cache, its speed,
+ * and no dependency on someone else's free server.
+ */
+const INDEXER_BASE = 'https://torrent-indexer.darklyn.org'
+
+/** Where a title comes from, since the app hands a plugin an IMDb id and nothing else. */
+const CINEMETA_BASE = 'https://v3-cinemeta.strem.io'
+
+/**
+ * The indexer searches by text, so the IMDb id has to become a title first.
+ * One request, made once, before the providers that need it fan out.
+ */
+async function lookupTitle(api, type, imdbId) {
+  const response = await api.fetch(`${CINEMETA_BASE}/meta/${type}/${imdbId}.json`)
+  if (!response.ok) return null
+  try {
+    const meta = (await response.json())?.meta
+    const name = typeof meta?.name === 'string' ? meta.name : ''
+    return name === '' ? null : name
+  } catch {
+    return null
+  }
+}
+
+const FLAGS = [
+  [/portugu|pt-?br|dublado|nacional/i, '🇧🇷'],
+  [/ingl|english/i, '🇺🇸'],
+  [/espanhol|spanish/i, '🇪🇸'],
+  [/japon|japanese/i, '🇯🇵'],
+]
+
+/**
+ * One indexer result in the shape juntos.lol reads.
+ *
+ * `info_hash` is preferred when it is there; otherwise the magnet goes into
+ * `url` and `normalize()` pulls the hash out of it later. Seeders, size and
+ * the site name are written as the `👤 💾 ⚙️` markers because that is the only
+ * place `parseStreamTitle` looks, and the audio tags become flag emojis on a
+ * line of their own, which is how it finds languages.
+ */
+function fromIndexer(raw, site) {
+  if (typeof raw !== 'object' || raw === null) return null
+  const hash = typeof raw.info_hash === 'string' ? raw.info_hash : ''
+  const magnet = typeof raw.magnet_link === 'string' ? raw.magnet_link : ''
+  if (!/^[0-9a-f]{40}$/i.test(hash) && magnet === '') return null
+
+  const label = [raw.title, raw.original_title].find((v) => typeof v === 'string' && v !== '') ?? 'sem título'
+  const stats = []
+  if (Number.isFinite(raw.seed_count)) stats.push(`👤 ${Math.trunc(raw.seed_count)}`)
+  if (typeof raw.size === 'string' && raw.size !== '') stats.push(`💾 ${raw.size}`)
+  stats.push(`⚙️ ${site}`)
+
+  const audio = Array.isArray(raw.audio) ? raw.audio.map(String).join(' ') : ''
+  const flags = FLAGS.filter(([pattern]) => pattern.test(audio)).map(([, flag]) => flag)
+
+  const stream = {
+    name: `Indexer\n${site}`,
+    title: [label, stats.join(' '), flags.join(' / ')].filter((line) => line !== '').join('\n'),
+  }
+  return /^[0-9a-f]{40}$/i.test(hash) ? { ...stream, infoHash: hash.toLowerCase() } : { ...stream, url: magnet }
+}
+
+/** The indexer answers `{results, count}`, not `{streams}`. */
+const indexerProvider = (site, label) => ({
+  name: `Indexer · ${label}`,
+  needsTitle: true,
+  adapt: (body) => (Array.isArray(body.results)
+    ? body.results.map((raw) => fromIndexer(raw, label)).filter((s) => s !== null)
+    : null),
+  mirrors: [{
+    // Searching by title only. The indexer's `imdb=` and `year=` filters drop
+    // every entry whose field the scraper could not fill — and it often cannot
+    // — so they cost far more recall than the precision they buy.
+    url: (ctx) => (ctx.title === ''
+      ? null
+      : `${INDEXER_BASE}/indexers/${site}?q=${encodeURIComponent(ctx.title)}&limit=20`),
+  }],
+})
+
+/**
  * Who to ask. Every entry speaks the Stremio stream protocol —
  * `/stream/{type}/{id}.json` — which is what makes this a bridge and not a
  * client of any one addon.
@@ -148,6 +236,8 @@ const PROVIDERS = [
       { base: 'https://27a5b2bfe3c0-stremio-brazilian-addon.baby-beamup.club', config: null },
     ],
   },
+  indexerProvider('bludv', 'BluDV'),
+  indexerProvider('comando_torrents', 'Comando'),
   {
     name: 'Torrentio',
     mirrors: [
@@ -228,7 +318,7 @@ function streamId(target) {
  * `streams` key at all. Null is what makes the caller try the bare path: an
  * empty `streams` array is an answer ("no sources"), a missing one is not.
  */
-async function fetchStreams(api, url) {
+async function fetchStreams(api, url, adapt) {
   const response = await api.fetch(url)
   if (!response.ok) return null
   let body
@@ -238,22 +328,31 @@ async function fetchStreams(api, url) {
     return null
   }
   if (typeof body !== 'object' || body === null) return null
-  return Array.isArray(body.streams) ? body.streams : null
+  return adapt(body)
 }
 
+/** What a Stremio addon answers with, and the default when a provider says nothing else. */
+const stremioStreams = (body) => (Array.isArray(body.streams) ? body.streams : null)
+
 /**
- * One mirror, configured path first and bare path as the fallback. The retry
- * is what keeps a drifted option key from taking the mirror down with it:
- * worst case Torrentio answers unfiltered, which is worse than configured and
- * far better than nothing. A mirror with no options skips straight to bare.
+ * One mirror. A mirror with a `url` of its own builds it and that is the whole
+ * request; the rest are Stremio addons, tried on the configured path first and
+ * the bare path as the fallback. The retry is what keeps a drifted option key
+ * from taking the mirror down with it: worst case the addon answers
+ * unfiltered, which is worse than configured and far better than nothing.
  */
-async function ask(api, mirror, type, id) {
-  const bare = `${mirror.base}/stream/${type}/${id}.json`
+async function ask(api, provider, mirror, ctx) {
+  const adapt = provider.adapt ?? stremioStreams
+  if (mirror.url) {
+    const url = mirror.url(ctx)
+    return url === null ? [] : (await fetchStreams(api, url, adapt)) ?? []
+  }
+  const bare = `${mirror.base}/stream/${ctx.type}/${ctx.id}.json`
   if (mirror.config) {
-    const configured = await fetchStreams(api, `${mirror.base}/${mirror.config}/stream/${type}/${id}.json`)
+    const configured = await fetchStreams(api, `${mirror.base}/${mirror.config}/stream/${ctx.type}/${ctx.id}.json`, adapt)
     if (configured !== null) return configured
   }
-  return (await fetchStreams(api, bare)) ?? []
+  return (await fetchStreams(api, bare, adapt)) ?? []
 }
 
 /**
@@ -370,11 +469,11 @@ function dedupe(streams) {
  * something. A mirror that times out or answers empty gave nothing, so the
  * next is tried either way — while the run still has time to try it.
  */
-async function askProvider(api, provider, type, id, remaining) {
+async function askProvider(api, provider, ctx, remaining) {
   for (const mirror of provider.mirrors) {
     const budget = remaining()
     if (budget <= 0) break
-    const result = await withDeadline(ask(api, mirror, type, id), budget)
+    const result = await withDeadline(ask(api, provider, mirror, ctx), budget)
     if (result !== timeout && result.length > 0) return result
   }
   return []
@@ -391,10 +490,18 @@ export async function streams(target, api) {
   const deadline = Date.now() + RUN_BUDGET_MS
   const remaining = () => Math.min(ATTEMPT_MS, deadline - Date.now())
 
+  const asking = PROVIDERS.filter((provider) => !provider.types || provider.types.includes(type))
+
+  // The indexers search by text, and a plugin is handed an IMDb id and nothing
+  // else. One lookup, before the fan-out, shared by every provider that needs
+  // it — and only paid for when one of them is in play.
+  const title = asking.some((provider) => provider.needsTitle) && remaining() > 0
+    ? await withDeadline(lookupTitle(api, type, target.id), remaining())
+    : null
+  const ctx = { type, id, title: typeof title === 'string' ? title : '' }
+
   const answers = await Promise.all(
-    PROVIDERS
-      .filter((provider) => !provider.types || provider.types.includes(type))
-      .map((provider) => askProvider(api, provider, type, id, remaining)),
+    asking.map((provider) => askProvider(api, provider, ctx, remaining)),
   )
   // Concatenated in PROVIDERS order, because that order is what a viewer reads.
   return dedupe(answers.flat())
