@@ -7,7 +7,9 @@ import { useT } from '../i18n/useT'
 import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl, createRoomAndUploadYoutube, isUnreadableFile, youtubeFileName, type UploadProgress } from '../upload'
 import { BuildInfo } from '../components/BuildInfo'
 import { LibraryShelf } from '../components/LibraryShelf'
+import { OfflineNotice } from '../components/OfflineNotice'
 import { library } from '../library'
+import { useOnline } from '../useOnline'
 import { roomCodeFrom } from '../roomCode'
 import { DiscordLink } from '../components/DiscordLink'
 import { JlocalDownload, JlocalStatus } from '../components/JlocalPill'
@@ -121,11 +123,13 @@ export function Home() {
     navigate(next === 'manual' ? '/' : next === 'library' ? '/downloads' : `/${next}`, { state: null })
   }
 
+  const online = useOnline()
   // The downloads tab appears once there is something in it, and stays while
   // it is open: a fourth tab on a browser that has never downloaded anything
-  // is a door onto an empty room.
+  // is a door onto an empty room. With no internet it is there regardless,
+  // because it is the only room that still works.
   const [hasDownloads] = useState(() => library().length > 0)
-  const tabs: HomeView[] = hasDownloads || view === 'library'
+  const tabs: HomeView[] = hasDownloads || view === 'library' || !online
     ? ['catalog', 'manual', 'library', 'status']
     : ['catalog', 'manual', 'status']
 
@@ -481,7 +485,9 @@ export function Home() {
         ) : view === 'library' ? (
           <LibraryShelf t={t} onOpened={(roomId) => navigate(`/room/${roomId}`)} />
         ) : view === 'catalog' ? (
-          <CatalogBrowser onOpenTitle={openTitle} hideSearch={detailsOpen !== null} />
+          online
+            ? <CatalogBrowser onOpenTitle={openTitle} hideSearch={detailsOpen !== null} />
+            : <OfflineNotice t={t} onDownloads={() => showView('library')} />
         ) : (
           <div className="manual-stage">
             <MorphPanel className="upload-morph" sizeKey={panelFilled ? shownManual : 'opening'} morphing={morphingManual || !panelFilled}>

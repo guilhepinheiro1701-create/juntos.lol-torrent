@@ -226,3 +226,62 @@ describe('the downloads tab', () => {
     expect(await screen.findByRole('tab', { name: /downloads|baixados/i })).toBeInTheDocument()
   })
 })
+
+describe('with no internet', () => {
+  const offline = (on: boolean) => Object.defineProperty(navigator, 'onLine', {
+    value: on, configurable: true, writable: true,
+  })
+
+  beforeEach(() => { localStorage.clear(); offline(false) })
+  afterEach(() => offline(true))
+
+  // The catalogue reads a metadata service; a spinner that never finishes
+  // tells the viewer nothing they can act on.
+  it('replaces the catalogue with a reason rather than a dead board', async () => {
+    render(<MemoryRouter initialEntries={['/catalog']}><Home /></MemoryRouter>)
+
+    expect(await screen.findByText(/no internet|sem internet/i)).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /popular movies|filmes populares/i })).not.toBeInTheDocument()
+  })
+
+  it('counts what is on disk and goes there', async () => {
+    localStorage.setItem('ss.library', JSON.stringify([
+      { roomId: 'r1', jobId: 'j1', fileName: 'a.mkv', title: 'Duna', savedAt: 2 },
+      { roomId: 'r2', jobId: 'j2', fileName: 'b.mkv', title: 'Arrival', savedAt: 1 },
+    ]))
+    render(
+      <MemoryRouter initialEntries={['/catalog']}>
+        <Routes><Route path="*" element={<Home />} /></Routes>
+      </MemoryRouter>,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: /watch the 2|assistir os 2/i }))
+
+    expect(await screen.findByText('Duna')).toBeInTheDocument()
+  })
+
+  it('says so plainly when nothing was ever downloaded', async () => {
+    render(<MemoryRouter initialEntries={['/catalog']}><Home /></MemoryRouter>)
+
+    expect(await screen.findByText(/nothing has been downloaded|nada foi baixado/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /watch the|assistir/i })).not.toBeInTheDocument()
+  })
+
+  // Offline it is the only room that still works, so it is reachable even on
+  // a browser that has never downloaded anything.
+  it('shows the downloads tab even with an empty library', async () => {
+    render(<MemoryRouter initialEntries={['/catalog']}><Home /></MemoryRouter>)
+
+    expect(await screen.findByRole('tab', { name: /downloads|baixados/i })).toBeInTheDocument()
+  })
+
+  it('goes back to the catalogue when the connection returns', async () => {
+    render(<MemoryRouter initialEntries={['/catalog']}><Home /></MemoryRouter>)
+    await screen.findByText(/no internet|sem internet/i)
+
+    offline(true)
+    fireEvent(window, new Event('online'))
+
+    expect(await screen.findByRole('heading', { name: /popular movies|filmes populares/i })).toBeInTheDocument()
+  })
+})

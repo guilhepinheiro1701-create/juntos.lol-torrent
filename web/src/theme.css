@@ -1056,3 +1056,11 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .storage-options button:hover { color: var(--text); background: var(--card-hover); }
 .storage-options button.is-chosen { border-color: rgba(255,122,69,.45); color: var(--text); background: var(--primary-soft); }
 .storage-free { color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* Sem internet: o catálogo não tem o que mostrar, os baixados têm. */
+.offline-notice { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 70px 20px; text-align: center; }
+.offline-notice > svg { color: var(--text-faint); }
+.offline-notice h2 { margin: 0; font-size: 25px; letter-spacing: -.035em; }
+.offline-notice p { max-width: 520px; margin: 0; color: var(--text-dim); font-size: 14px; line-height: 1.5; }
+.offline-notice .primary-button { display: inline-flex; align-items: center; gap: 7px; margin-top: 8px; }
+.offline-notice .offline-empty { color: var(--text-faint); font-size: 13px; }
