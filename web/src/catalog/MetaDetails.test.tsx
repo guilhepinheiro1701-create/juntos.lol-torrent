@@ -21,7 +21,7 @@ vi.mock('../plugins/resolve', () => ({ resolveStreams: vi.fn() }))
 const meta: CatalogMeta = { id: 'tt1', type: 'movie', name: 'Duna', poster: '', releaseInfo: '2021' }
 const open = { meta }
 
-const show = (mode: 'create' | 'host' | 'viewer') => render(
+const show = (mode: 'create' | 'host') => render(
   <MetaDetails
     open={open}
     mode={mode}
@@ -33,12 +33,6 @@ const show = (mode: 'create' | 'host' | 'viewer') => render(
 
 describe('MetaDetails and its empty states', () => {
   beforeEach(() => { vi.mocked(resolveStreams).mockReset() })
-
-  it('does not run any plugin for a viewer', async () => {
-    show('viewer')
-    await screen.findByText('Duna')
-    expect(resolveStreams).not.toHaveBeenCalled()
-  })
 
   it('runs plugins for the person who will actually open the source', async () => {
     vi.mocked(resolveStreams).mockResolvedValue({ kind: 'streams', streams: [], failed: [] })

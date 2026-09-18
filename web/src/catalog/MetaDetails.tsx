@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { animate } from 'motion'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { isGecko } from '../engine'
-import { ChevronLeft, Filter, MessageSquareShare, Play, PlugZap, Puzzle, SearchX, Star, X } from 'lucide-react'
+import { ChevronLeft, Filter, Play, PlugZap, Puzzle, SearchX, Star, X } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { Dropdown } from './Dropdown'
 import { languageName } from './languages'
@@ -18,7 +18,7 @@ const CARD_RADIUS = '14px'
 const MORPH_EASE: [number, number, number, number] = [0.77, 0, 0.175, 1]
 const REVEAL_EASE: [number, number, number, number] = [0.23, 1, 0.32, 1]
 
-export type DetailsMode = 'create' | 'host' | 'viewer'
+export type DetailsMode = 'create' | 'host'
 
 export interface TitlePick {
   stream: CatalogStream
@@ -34,7 +34,6 @@ interface MetaDetailsProps {
   focus?: { season: number; episode: number }
   onClose: () => void
   onPickStream: (pick: TitlePick) => void
-  onRequestTitle?: (request: { season?: number; episode?: number }) => void
   onOpenPlugins?: () => void
 }
 
@@ -66,7 +65,7 @@ function SourcesEmpty({ icon, title, hint, action }: {
 // O painel nasce do pôster clicado (FLIP) e só revela o conteúdo quando o morph
 // pousa; sem rect de origem ele entra com fade, e fechar é sempre fade. No
 // celular é uma folha que sobe do rodapé e desce por ali, sem morph.
-export function MetaDetails({ open, mode, focus, onClose, onPickStream, onRequestTitle, onOpenPlugins }: MetaDetailsProps) {
+export function MetaDetails({ open, mode, focus, onClose, onPickStream, onOpenPlugins }: MetaDetailsProps) {
   const t = useT()
   const reduceMotion = useReducedMotion()
   const flatReveal = reduceMotion || isGecko
@@ -89,7 +88,6 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
   const markArtLoaded = useCallback(() => setArtLoaded(true), [])
   const [resolutionFilter, setResolutionFilter] = useState<'all' | StreamResolution>('all')
   const [languageFilter, setLanguageFilter] = useState('all')
-  const [requested, setRequested] = useState(false)
   const meta = open.meta
   const sheet = useMemo(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 620px)').matches, [])
   const morphs = Boolean(open.rect) && !reduceMotion && !sheet
@@ -116,7 +114,7 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
   }, [detail?.imdbId, meta.id, meta.type, selected])
 
   useEffect(() => {
-    if (!target || mode === 'viewer') return
+    if (!target) return
     const abort = new AbortController()
     let cancelled = false
     setStreams(null)
@@ -275,12 +273,6 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
     [streams, resolutionFilter, languageFilter],
   )
 
-  const requestEpisode = () => {
-    onRequestTitle?.(selected ? { season: selected.season, episode: selected.episode } : {})
-    setRequested(true)
-    window.setTimeout(() => setRequested(false), 6000)
-  }
-
   const reveal = revealed
     ? { opacity: 1, transform: 'translateY(0px)' }
     : { opacity: 0, transform: reduceMotion ? 'translateY(0px)' : 'translateY(20px)' }
@@ -415,31 +407,6 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onReques
                   ))}
                 </Carousel>
               ) : detail ? <p className="empty-copy">{t('details.noEpisodes')}</p> : null}
-            </motion.div>
-          ) : mode === 'viewer' ? (
-            <motion.div
-              key="request"
-              className="details-request"
-              initial={flatReveal ? { opacity: 0 } : { opacity: 0, filter: 'blur(8px)' }}
-              animate={flatReveal ? { opacity: 1 } : { opacity: 1, filter: 'blur(0px)' }}
-              exit={flatReveal ? { opacity: 0 } : { opacity: 0, filter: 'blur(8px)' }}
-              transition={{ duration: 0.2, ease: REVEAL_EASE }}
-            >
-              {selected ? (
-                <button type="button" className="details-back" onClick={() => setSelected(null)}>
-                  <ChevronLeft size={15} aria-hidden="true" />
-                  {t('details.back')} · E{selected.episode} {selected.name}
-                </button>
-              ) : null}
-              <button
-                type="button"
-                className="primary-button raised"
-                disabled={requested}
-                onClick={requestEpisode}
-              >
-                <MessageSquareShare size={16} aria-hidden="true" />
-                {requested ? t('details.requested') : t('details.requestHost')}
-              </button>
             </motion.div>
           ) : target ? (
             <motion.div

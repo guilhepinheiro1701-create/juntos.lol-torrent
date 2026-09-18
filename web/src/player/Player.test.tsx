@@ -243,32 +243,6 @@ describe('Player', () => {
     await waitFor(() => expect(container.querySelector('track')?.getAttribute('src')).toBe('https://media.example.test/rooms/r1/g2/subs/sub_1000_und.vtt?g=2&s=d'))
     fireEvent.click(screen.getByRole('button', { name: /settings|configurações/i }))
     expect(await screen.findByTestId('setting-subtitles')).toHaveTextContent('Filme.srt')
-    await waitFor(() => expect(send).toHaveBeenLastCalledWith('subtitles', { subtitles: { track: 1000, delayMs: 0 } }))
-  })
-
-  it('lets a viewer copy the host subtitle pick, track and delay alike', async () => {
-    const withSubs: RoomInfo = {
-      ...room,
-      subtitleTracks: [
-        { index: 0, language: 'eng', title: 'English', codec: 'webvtt' },
-        { index: 1, language: 'por', title: 'Portugues', codec: 'webvtt' },
-      ],
-      mediaBaseUrl: 'https://media.example.test/rooms/r1/g0',
-    }
-    const send = vi.fn()
-    render(
-      <Player
-        room={withSubs} isController={false} hostSubtitles={{ track: 1, delayMs: 500 }}
-        videoRef={createRef<HTMLVideoElement>()} send={send} t={t}
-      />,
-    )
-    fireEvent.click(screen.getByRole('button', { name: /settings|configurações/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /subtitle delay/i }))
-    fireEvent.click(screen.getByRole('button', { name: /copy from host/i }))
-
-    expect(screen.getByTestId('setting-subtitles')).toHaveTextContent('Portugues')
-    expect(screen.getByTestId('setting-subtitleDelay')).toHaveTextContent('+0.50 s')
-    expect(send).not.toHaveBeenCalledWith('subtitles', expect.anything())
   })
 
   it('starts media inside the controller click before sending synchronized play', async () => {

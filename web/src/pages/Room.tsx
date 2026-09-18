@@ -6,15 +6,12 @@ import { Link, useParams } from 'react-router-dom'
 import { ChaptersPanel } from '../player/ChaptersPanel'
 import { StatusPill } from '../components/StatusPill'
 import { CopyErrorReport } from '../components/CopyErrorReport'
-import { StillThere } from '../components/StillThere'
-import { caretToEndOnFocus } from '../ui/caret'
 import { UploadAvailability, type OpeningWait } from '../components/UploadAvailability'
 import { Check, Compass, Link2, Replace, Upload } from 'lucide-react'
 import { YoutubeGlyph } from '../ui/YoutubeGlyph'
 import { useT, type Translator } from '../i18n/useT'
 import { Player, regionHolds } from '../player/Player'
-import { useSync } from '../player/useSync'
-import { Button } from '../ui/Button'
+import { usePlayback } from '../player/usePlayback'
 import { IconButton } from '../ui/IconButton'
 import { MorphPanel } from '../ui/MorphPanel'
 import { MorphingMenu } from '../ui/MorphingMenu'
@@ -72,7 +69,6 @@ const PRODUCER_ALIVE_MS = 90_000
 
 export function RoomPage() {
   const { id = '' } = useParams()
-  const [nickname, setNickname] = useState(() => localStorage.getItem('ss.nickname') || '')
   const [room, setRoom] = useState<RoomInfo | null>(null)
   const [missing, setMissing] = useState(false)
 
@@ -92,25 +88,17 @@ export function RoomPage() {
     return () => controller.abort()
   }, [id])
 
-  const waiting: GateStep = missing ? 'expired' : !room ? 'connecting' : !nickname ? 'join' : null
-  if (waiting !== null) {
-    return (
-      <RoomGate
-        step={waiting}
-        onJoin={(value) => { localStorage.setItem('ss.nickname', value); setNickname(value) }}
-      />
-    )
-  }
-  return <ConnectedRoom room={room!} nickname={nickname} />
+  const waiting: GateStep = missing ? 'expired' : !room ? 'connecting' : null
+  if (waiting !== null) return <RoomGate step={waiting} />
+  return <ConnectedRoom room={room!} />
 }
 
-type GateStep = 'connecting' | 'join' | 'expired' | 'preparing' | 'buffering' | 'failed' | 'error' | null
+type GateStep = 'connecting' | 'expired' | 'preparing' | 'buffering' | 'failed' | 'error' | null
 
 /** One panel that changes what it asks for, rather than swapping screens. */
-function RoomGate({ step, room, onJoin, progress, preparation, swarm, wait, overlay = false, leaving = false, failure, errorMessage }: {
+function RoomGate({ step, room, progress, preparation, swarm, wait, overlay = false, leaving = false, failure, errorMessage }: {
   step: GateStep
   room?: RoomInfo
-  onJoin?: (nickname: string) => void
   progress?: RoomUploadProgress | null
   preparation?: RoomInfo['preparation']
   swarm?: TorrentStats | null
@@ -122,7 +110,6 @@ function RoomGate({ step, room, onJoin, progress, preparation, swarm, wait, over
   errorMessage?: string
 }) {
   const t = useT()
-  const [draft, setDraft] = useState('')
   const { shown, morphing } = useMorphingStep(step)
   return (
     <main className={`center-state${overlay ? ' gate-overlay' : ''}${leaving ? ' is-leaving' : ''}`}>
@@ -132,28 +119,6 @@ function RoomGate({ step, room, onJoin, progress, preparation, swarm, wait, over
             <span className="stage-spinner" aria-hidden="true" />
             <StatusPill status="connecting" label={t('status.connecting')} />
           </div>
-        ) : null}
-
-        {shown === 'join' ? (
-          <form className="join-card" onSubmit={(event) => {
-            event.preventDefault()
-            onJoin?.(draft.trim() || guestName())
-          }}>
-            <h1>{t('room.joinTitle')}</h1>
-            <p>{t('room.joinGuide')}</p>
-            <label htmlFor="join-nickname">{t('home.nickname')}</label>
-            <input
-              id="join-nickname"
-              className="sunken text-field"
-              autoFocus
-              value={draft}
-              maxLength={64}
-              placeholder={t('home.nicknamePlaceholder')}
-              onFocus={caretToEndOnFocus}
-              onChange={(event) => setDraft(event.target.value)}
-            />
-            <button type="submit" className="primary-button">{t('room.join')}</button>
-          </form>
         ) : null}
 
         {shown === 'preparing' || shown === 'buffering' ? (
@@ -193,14 +158,7 @@ function RoomGate({ step, room, onJoin, progress, preparation, swarm, wait, over
   )
 }
 
-// Mirrors the guest name the server hands out, so a blank field is valid.
-function guestName(): string {
-  const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
-  const random = crypto.getRandomValues(new Uint8Array(6))
-  return `Guest-${Array.from(random, (value) => alphabet[value % alphabet.length]).join('')}`
-}
-
-function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string }) {
+function ConnectedRoom({ room }: { room: RoomInfo }) {
   const jlocal = useJLocal()
   const t = useT()
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -209,18 +167,9 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const coldWaitRef = useRef(false)
   const coldForRef = useRef<((ms: number) => boolean) | null>(null)
   const remoteSteerAtRef = useRef(0)
-  const sync = useSync(room.id, nickname, videoRef, mediaOffsetMsRef, coldWaitRef, remoteSteerAtRef, coldForRef)
-  const { leave } = sync
-  const leaveIdle = useCallback(() => {
-    videoRef.current?.pause()
-    leave()
-  }, [leave])
+  const sync = usePlayback(videoRef, mediaOffsetMsRef, coldWaitRef, remoteSteerAtRef, coldForRef)
   const { toast } = useToast()
   const [liveRoom, setLiveRoom] = useState(room)
-  useEffect(() => {
-    if (!sync.errorSeq) return
-    if (sync.lastError === 'not_controller') toast(t('room.notController'))
-  }, [sync.errorSeq, sync.lastError, t, toast])
   if (!liveRoom.mediaRegions || liveRoom.mediaRegions.length === 0) {
     mediaOffsetMsRef.current = liveRoom.mediaOffsetMs ?? 0
   }
@@ -239,10 +188,10 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     diskBytes: reported.diskBytes,
     progress: reported.selectedBytes > 0 ? Math.min(reported.haveBytes / reported.selectedBytes, 1) : 0,
   } : null), [localSwarm, reported])
-  const resumeWanted = sync.state ? expectedPositionMs(sync.state, Date.now() + sync.serverOffsetMs) : null
+  const resumeWanted = sync.state ? expectedPositionMs(sync.state, Date.now()) : null
   const liveRegions = liveRoom.mediaRegions ?? []
   const producing = liveRoom.producerHeartbeatMs !== undefined
-    && (Date.now() + sync.serverOffsetMs) - liveRoom.producerHeartbeatMs < PRODUCER_ALIVE_MS
+    && Date.now() - liveRoom.producerHeartbeatMs < PRODUCER_ALIVE_MS
   const needsPreparo = !producing
     && (liveRoom.status !== 'ready'
       || (resumeWanted !== null && liveRegions.length > 0
@@ -302,7 +251,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const [sidePanel, setSidePanel] = useState<'chapters' | null>(null)
   const [uploadProgress, setUploadProgress] = useState<RoomUploadProgress | null>(null)
   const [uploadFailed, setUploadFailed] = useState<string | null>(null)
-  const mediaStatus = sync.roomStatus === 'ready' || sync.roomStatus === 'error' ? sync.roomStatus : liveRoom.status
+  const mediaStatus = liveRoom.status
   const [sourcePanel, setSourcePanel] = useState<'torrent' | 'youtube' | null>(null)
   // The torrent the room is playing now, when this browser is the one that
   // opened it: the picker lists it again as a playlist instead of asking.
@@ -425,73 +374,29 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   }
 
   const preparing = mediaStatus === 'uploading' || mediaStatus === 'processing'
+  // The room used to push its own changes down the socket: a status, a media
+  // patch, a version bump that asked the page to refetch. With one viewer and
+  // no socket, the page asks instead. It asks while there is something to
+  // watch — a preparo running, or a pipeline still writing regions behind a
+  // room that already plays — and stops once the room has settled, so a
+  // finished film is not refetched every three seconds forever.
+  const watching = preparing || producing
   useEffect(() => {
-    if (!preparing || sync.connected) return
+    if (!watching) return
     const controller = new AbortController()
-    const timer = window.setInterval(() => {
+    const read = () => {
       void fetch(`/api/rooms/${encodeURIComponent(room.id)}`, { signal: controller.signal })
         .then(async (response) => { if (response.ok) setLiveRoom(await response.json() as RoomInfo) })
         .catch(() => undefined)
-    }, PREPARING_POLL_MS)
-    return () => { window.clearInterval(timer); controller.abort() }
-  }, [preparing, sync.connected, room.id])
-
-  const refetch = useRef({ running: false, latest: 0, controller: null as AbortController | null })
-  useEffect(() => {
-    remuxHandleFor(room.id)?.follow(expectedPositionMs(sync.state, Date.now() + sync.serverOffsetMs))
-  }, [room.id, sync.state, sync.serverOffsetMs])
-
-  const { mediaPatch, refreshRoom } = sync
-  useEffect(() => {
-    if (!mediaPatch) return
-    setLiveRoom((current) => {
-      if (mediaPatch.mediaGeneration !== current.mediaGeneration || mediaPatch.mediaVersion < (current.mediaVersion ?? 0)) {
-        refreshRoom()
-        return current
-      }
-      return {
-        ...current,
-        mediaVersion: mediaPatch.mediaVersion,
-        mediaOffsetMs: mediaPatch.mediaOffsetMs,
-        mediaRegions: mediaPatch.mediaRegions ?? undefined,
-      }
-    })
-  }, [mediaPatch, refreshRoom])
-
-  useEffect(() => {
-    const state = refetch.current
-    state.latest = sync.roomVersion
-    if (sync.roomVersion === 0 || state.running) return
-    state.running = true
-    const controller = new AbortController()
-    state.controller = controller
-    void (async () => {
-      try {
-        let fetched = -1
-        while (fetched !== state.latest) {
-          fetched = state.latest
-          const response = await fetch(`/api/rooms/${encodeURIComponent(room.id)}`, { signal: controller.signal })
-          if (response.ok) setLiveRoom(await response.json() as RoomInfo)
-        }
-      } catch (error) {
-        if (!(error instanceof DOMException && error.name === 'AbortError')) {
-          console.error('room refetch failed', error)
-        }
-      } finally {
-        state.running = false
-        state.controller = null
-      }
-    })()
-  }, [sync.roomVersion, room.id])
-  useEffect(() => {
-    const state = refetch.current
-    return () => {
-      state.controller?.abort()
-      state.running = false
-      state.latest = 0
     }
-  }, [room.id])
+    read()
+    const timer = window.setInterval(read, PREPARING_POLL_MS)
+    return () => { window.clearInterval(timer); controller.abort() }
+  }, [watching, room.id])
 
+  useEffect(() => {
+    remuxHandleFor(room.id)?.follow(expectedPositionMs(sync.state, Date.now()))
+  }, [room.id, sync.state])
 
   useEffect(() => subscribeUploadProgress(room.id, setUploadProgress), [room.id, liveRoom.mediaGeneration])
   useEffect(() => {
@@ -505,7 +410,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const nextEpisode = useNextEpisode(
     nowPlaying,
     videoRef,
-    sync.isController && mediaStatus === 'ready',
+    mediaStatus === 'ready',
     chooseCatalogStream,
   )
 
@@ -561,21 +466,15 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
             ? <PipelineChip swarm={swarmStats} progress={uploadProgress} remote={isRemoteProduction(room.id)} videoRef={videoRef} t={t} />
             : null}
           {uploadFailed !== null ? <span className="upload-chip is-error">{t('room.uploadFailed')}</span> : null}
-          <StatusPill status={sync.buffering ? 'buffering' : sync.connected ? 'live' : 'connecting'} label={t(sync.buffering ? 'status.buffering' : sync.connected ? 'status.live' : 'status.connecting')} />
-          {sync.isController ? (
-            <MediaSwitch
-              t={t}
-              onOpen={() => setSourceError('')}
-              onCatalog={() => { setCatalogFocus(null); setCatalogOpen(true) }}
-              onTorrent={() => setSourcePanel('torrent')}
-              onYoutube={() => setSourcePanel('youtube')}
-              onFile={() => fileInputRef.current?.click()}
-            />
-          ) : (
-            <Button className="catalog-open" onClick={() => { setCatalogFocus(null); setCatalogOpen(true) }}>
-              <Compass size={15} aria-hidden="true" />{t('catalog.tab')}
-            </Button>
-          )}
+          <StatusPill status={sync.buffering ? 'buffering' : 'live'} label={t(sync.buffering ? 'status.buffering' : 'status.live')} />
+          <MediaSwitch
+            t={t}
+            onOpen={() => setSourceError('')}
+            onCatalog={() => { setCatalogFocus(null); setCatalogOpen(true) }}
+            onTorrent={() => setSourcePanel('torrent')}
+            onYoutube={() => setSourcePanel('youtube')}
+            onFile={() => fileInputRef.current?.click()}
+          />
           <IconButton
             icon={
               <span className="morph-fade" data-morphing={copyMorphing}>
@@ -595,8 +494,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
           {(
             <Player
               room={liveRoom}
-              isController={sync.isController}
-              hostSubtitles={sync.hostSubtitles}
+              isController
               videoRef={videoRef}
               send={sync.send}
               t={t}
@@ -609,7 +507,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               coldForRef={coldForRef}
               remoteSteerAtRef={remoteSteerAtRef}
               autoplayBlocked={sync.autoplayBlocked}
-              gatedStart={sync.waiting !== null}
               onBuffering={sync.reportBuffering}
               onWait={onWait}
               onChapters={() => setSidePanel((panel) => panel === 'chapters' ? null : 'chapters')}
@@ -634,11 +531,11 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
             chapters={liveRoom.chapters ?? []}
             open
             onClose={() => setSidePanel(null)}
-            onSeek={sync.isController ? (seconds) => {
+            onSeek={(seconds) => {
               const throughPlayer = playerSeekRef.current
               if (throughPlayer) throughPlayer(seconds)
               else sync.send('seek', { positionMs: Math.round(seconds * 1000) })
-            } : undefined}
+            }}
             videoRef={videoRef}
             t={t}
           />
@@ -656,50 +553,13 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       {catalogOpen ? (
         <Suspense fallback={null}>
           <CatalogOverlay
-            mode={sync.isController ? 'host' : 'viewer'}
+            mode="host"
             focus={catalogFocus}
             onClose={() => { setCatalogOpen(false); setCatalogFocus(null) }}
             onPickStream={chooseCatalogStream}
-            onRequestTitle={(open, episode) => {
-              sync.send('titleRequest', {
-                title: {
-                  metaId: open.meta.id,
-                  metaType: open.meta.type,
-                  name: open.meta.name,
-                  poster: open.meta.poster,
-                  season: episode.season,
-                  episode: episode.episode,
-                },
-              })
-            }}
           />
         </Suspense>
       ) : null}
-      <StillThere
-        deadlineMs={sync.stillThereDeadlineMs}
-        serverOffsetMs={sync.serverOffsetMs}
-        onStay={() => sync.send('stillHere')}
-        onExpired={leaveIdle}
-        t={t}
-      />
-      <Dialog open={sync.left} onOpenChange={() => undefined}>
-        {sync.left ? (
-          <DialogContent
-            className="still-there-dialog"
-            closeLabel={t('room.closedIdleHome')}
-            title={t(sync.kicked ? 'room.kickedTitle' : 'room.closedIdleTitle')}
-            description={t(sync.kicked ? 'room.kickedGuide' : 'room.closedIdleGuide')}
-            onCloseClick={() => { window.location.assign("/") }}
-          >
-            <div className="closed-idle-actions">
-              <button type="button" className="primary-button" autoFocus onClick={() => window.location.reload()}>
-                {t('room.closedIdleRejoin')}
-              </button>
-              <Link className="secondary-button" to="/">{t('room.closedIdleHome')}</Link>
-            </div>
-          </DialogContent>
-        ) : null}
-      </Dialog>
       <Dialog open={sourcePanel !== null} onOpenChange={(open) => { if (!open) setSourcePanel(null) }}>
         {sourcePanel !== null ? (
           <DialogContent

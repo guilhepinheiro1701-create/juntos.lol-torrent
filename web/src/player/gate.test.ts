@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { GATE_BASE_SEC, GATE_FLOOR_SEC, GATE_OPEN_SEC, gateSecondsFor } from './gate'
 
 describe('gateSecondsFor', () => {
-  const later = { sealed: false, gatedStart: false, opening: false }
+  const later = { sealed: false, opening: false }
   it('asks for the base with no region map', () => {
     expect(gateSecondsFor({ producedEdgeSec: null, currentTime: 0, ...later })).toBe(GATE_BASE_SEC)
   })
@@ -15,7 +15,6 @@ describe('gateSecondsFor', () => {
   })
   it('takes the floor for a sealed region and for a gated start', () => {
     expect(gateSecondsFor({ producedEdgeSec: null, currentTime: 0, ...later, sealed: true })).toBe(GATE_FLOOR_SEC)
-    expect(gateSecondsFor({ producedEdgeSec: 200, currentTime: 0, ...later, gatedStart: true })).toBe(GATE_FLOOR_SEC)
   })
   it('the opening asks for thirty seconds however thin the published edge is', () => {
     expect(GATE_OPEN_SEC).toBe(30)

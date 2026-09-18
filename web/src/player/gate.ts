@@ -21,10 +21,9 @@ export function gateSecondsFor(input: {
   producedEdgeSec: number | null
   currentTime: number
   sealed: boolean
-  gatedStart: boolean
   opening: boolean
 }): number {
-  if (input.sealed || input.gatedStart) return GATE_FLOOR_SEC
+  if (input.sealed) return GATE_FLOOR_SEC
   if (input.opening) return GATE_OPEN_SEC
   if (input.producedEdgeSec === null) return GATE_BASE_SEC
   const available = input.producedEdgeSec - input.currentTime - 0.5
