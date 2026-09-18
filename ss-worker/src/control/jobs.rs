@@ -23,7 +23,7 @@ pub async fn run(job: Job, engine: &Arc<Engine>, app: &Arc<AppState>, drain: &to
             let (Some(ih), Some(lease)) = (job.infohash.as_deref(), job.lease_id.as_deref()) else {
                 return err("bad_job", "lease needs infohash and leaseId".into());
             };
-            match engine.lease(ih, lease, &job.trackers).await {
+            match engine.lease(ih, lease, &job.trackers, job.storage.as_deref().unwrap_or_default()).await {
                 Ok(info) => ok(json!({ "infohash": info.infohash, "name": info.name, "files": info.files })),
                 Err(e) => err(e.code(), e.to_string()),
             }

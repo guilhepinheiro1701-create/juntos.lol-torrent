@@ -271,15 +271,18 @@ fn punch_works(dir: &std::path::Path) -> bool {
 
 impl Engine {
     pub async fn new(cfg: WorkerConfig) -> anyhow::Result<Arc<Self>> {
-        let dir = cfg.data_dir.join("torrents");
+        std::fs::create_dir_all(&cfg.data_dir)?;
+        cfg.places.ensure()?;
+        let dir = cfg.places.default_path().to_path_buf();
         // A varredura antiga apagava esta pasta inteira, o que fazia de
         // "baixar para assistir offline" uma verdade que durava até o próximo
-        // restart. Agora o que alguém pediu para ficar, fica.
-        std::fs::create_dir_all(&cfg.data_dir)?;
+        // restart. Agora o que alguém pediu para ficar, fica — e varre todos
+        // os lugares, não só aquele onde os torrents caem por padrão.
         let kept = kept::Kept::load(&cfg.data_dir);
-        kept::sweep_leftovers(&dir, &kept.folders());
+        for place in cfg.places.paths() {
+            kept::sweep_leftovers(&place, &kept.folders());
+        }
         kept.prune_missing();
-        std::fs::create_dir_all(&dir)?;
         let mut opts = SessionOptions {
             fastresume: true,
             trackers: TRACKERS
@@ -312,7 +315,7 @@ impl Engine {
             session,
             torrents: Mutex::new(HashMap::new()),
             kept,
-            disk: DiskAccountant::new(cfg.disk_quota_bytes, cfg.high_water_bytes(), dir.clone()),
+            disk: DiskAccountant::new(cfg.disk_quota_bytes, cfg.high_water_bytes(), cfg.places.paths()),
             transients: Arc::new(tokio::sync::Semaphore::new(cfg.max_leases * 2)),
             cfg,
             draining: AtomicBool::new(false),
@@ -351,11 +354,16 @@ impl Engine {
 
     /// Takes a lease on a torrent for a job: admits it, resolves its
     /// metadata, and lists its files. Nothing is downloaded until select.
+    /// `storage` nomeia um dos lugares que esta instalação publicou. Vazio é o
+    /// padrão; um rótulo que não existe é recusado em vez de cair no padrão,
+    /// porque guardar o filme no disco errado em silêncio é pior do que dizer
+    /// que não dá.
     pub async fn lease(
         &self,
         infohash: &str,
         lease_id: &str,
         trackers: &[String],
+        storage: &str,
     ) -> Result<LeaseInfo, Rejection> {
         let infohash = infohash.to_ascii_lowercase();
         if self.draining() {
@@ -366,6 +374,10 @@ impl Engine {
             return admission::lease_info(&handle).map_err(Rejection::Internal);
         }
         admission::admit_counts(self, lease_id)?;
+        let Some(place) = self.cfg.places.resolve(storage) else {
+            return Err(Rejection::UnknownStorage);
+        };
+        let place = place.to_path_buf();
         let magnet = admission::magnet(&infohash, trackers);
         let listed = tokio::time::timeout(
             INIT_TIMEOUT,
@@ -403,6 +415,7 @@ impl Engine {
             paused: true,
             initial_peers: Some(listed.seen_peers.clone()),
             force_tracker_interval: Some(TRACKER_INTERVAL),
+            output_folder: Some(place.to_string_lossy().into_owned()),
             ..Default::default()
         };
         options.ratelimits.upload_bps = std::num::NonZeroU32::new(self.cfg.upload_bps);

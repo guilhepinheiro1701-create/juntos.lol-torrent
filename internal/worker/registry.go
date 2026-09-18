@@ -28,6 +28,7 @@ type Heartbeat struct {
 		LastResult *string `json:"lastResult"`
 	} `json:"cert"`
 	Disk         DiskReport        `json:"disk"`
+	Storage      []StoragePlace    `json:"storage,omitempty"`
 	Relayed      bool              `json:"relayed"`
 	Transfer     *TransferStats    `json:"transfer"`
 	Leases       int               `json:"leases"`
@@ -36,6 +37,15 @@ type Heartbeat struct {
 	PermitsInUse int64             `json:"permitsInUse"`
 	Torrents     []TorrentDigest   `json:"torrents"`
 	Remux        *remux.Capability `json:"remux,omitempty"`
+}
+
+// StoragePlace is one of the locations a worker was configured to store
+// films in. Only the label travels: the page picks between "SSD" and "HDD",
+// never between directories, and the worker's own paths are no business of
+// anyone's browser.
+type StoragePlace struct {
+	Label     string `json:"label"`
+	FreeBytes int64  `json:"freeBytes"`
 }
 
 // TransferStats is the worker's serving-bandwidth ceiling and how much of
@@ -283,7 +293,10 @@ type JobRecord struct {
 	Audience  string          `json:"audience,omitempty"`
 	// Keep marks a download the viewer asked to keep on disk for offline
 	// watching; the worker exempts it from every routine that reclaims space.
-	Keep       bool      `json:"keep,omitempty"`
+	Keep bool `json:"keep,omitempty"`
+	// Storage names which of the worker's configured places this torrent was
+	// put in, so a later job for it lands in the same one.
+	Storage    string    `json:"storage,omitempty"`
 	CreatedAt  time.Time `json:"createdAt"`
 	LastSeenAt time.Time `json:"lastSeenAt"`
 	HaveBytes  int64     `json:"haveBytes"`

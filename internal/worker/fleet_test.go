@@ -63,3 +63,33 @@ func TestFleetReportsTheBudgetsBehindTheVerdict(t *testing.T) {
 	require.Equal(t, int64(3600), member.UptimeSecs)
 	require.InDelta(t, 0.235, member.Load, 0.001)
 }
+
+func TestFleetPublishesTheStoragePlacesAWorkerOffers(t *testing.T) {
+	r := newRegistry(t)
+	live(r, "two-disks", Heartbeat{Leases: 0, MaxLeases: 8, MaxTorrents: 10, Storage: []StoragePlace{
+		{Label: "SSD", FreeBytes: 40 << 30},
+		{Label: "HDD", FreeBytes: 900 << 30},
+	}})
+
+	fleet := r.Fleet(time.Now())
+	require.Len(t, fleet, 1)
+	require.Equal(t, []StoragePlace{
+		{Label: "SSD", FreeBytes: 40 << 30},
+		{Label: "HDD", FreeBytes: 900 << 30},
+	}, fleet[0].Storage)
+}
+
+func TestOffersStorageMatchesTheLabelHoweverItIsAsked(t *testing.T) {
+	with := Worker{Heartbeat: Heartbeat{Storage: []StoragePlace{{Label: "SSD"}}}}
+	without := Worker{}
+
+	// No choice fits everyone, including a worker that publishes no places at
+	// all: that is every worker running the version before this one.
+	require.True(t, offersStorage(with, ""))
+	require.True(t, offersStorage(without, ""))
+
+	require.True(t, offersStorage(with, "ssd"))
+	require.True(t, offersStorage(with, "SSD"))
+	require.False(t, offersStorage(with, "HDD"))
+	require.False(t, offersStorage(without, "SSD"))
+}

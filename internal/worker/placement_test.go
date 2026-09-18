@@ -20,9 +20,21 @@ func newRegistry(t *testing.T) *Registry {
 
 func live(r *Registry, id string, hb Heartbeat) {
 	hb.Ready = true
-	l := &link{}
+	l := newTestLink(id)
 	r.Attach(t0ctx(), id, "pk", "https://"+id, l)
 	r.Observe(t0ctx(), id, l, hb)
+}
+
+// A link shaped like the one the upgrade path builds. Tests that only place
+// work can get away with a bare &link{}; one that dispatches cannot, because
+// Dispatch parks a channel in pending and sends down send.
+func newTestLink(id string) *link {
+	return &link{
+		workerID: id,
+		send:     make(chan []byte, 64),
+		pending:  map[string]chan Result{},
+		closed:   make(chan struct{}),
+	}
 }
 
 func TestPlacementPrefersAffinityThenLeastLoaded(t *testing.T) {
@@ -129,4 +141,51 @@ func TestPlacementPrefersADirectHolderOverARelayedOne(t *testing.T) {
 	w, err := r.Place(ih, 0, time.Now())
 	require.NoError(t, err)
 	require.Equal(t, "direct-warm", w.ID)
+}
+
+// A viewer who picked a disk picked it for a reason: placing the film on a
+// different one would be worse than saying it cannot be done.
+func TestStartRefusesAStoragePlaceNoWorkerOffers(t *testing.T) {
+	r := newRegistry(t)
+	signer, err := LoadOrCreateSigner("")
+	require.NoError(t, err)
+	live(r, "plain", Heartbeat{Leases: 0, MaxLeases: 8, MaxTorrents: 10})
+	service := &Service{Registry: r, Hub: NewHub(r, signer, "secret"), Signer: signer, Blocklist: &Blocklist{}}
+
+	_, err = service.Start(t.Context(), "s1", strings.Repeat("a", 40), "", "SSD", nil, nil)
+	require.ErrorIs(t, err, ErrUnknownStorage)
+}
+
+// The placement picks by load and knows nothing about disks, so the worker it
+// lands on may not have the one that was asked for.
+func TestStartMovesToTheWorkerThatHasTheStoragePlace(t *testing.T) {
+	r := newRegistry(t)
+	signer, err := LoadOrCreateSigner("")
+	require.NoError(t, err)
+	live(r, "idle-plain", Heartbeat{Leases: 0, MaxLeases: 8, MaxTorrents: 10})
+	live(r, "busy-ssd", Heartbeat{Leases: 5, MaxLeases: 8, MaxTorrents: 10,
+		Storage: []StoragePlace{{Label: "SSD", FreeBytes: 1 << 40}}})
+	service := &Service{Registry: r, Hub: NewHub(r, signer, "secret"), Signer: signer, Blocklist: &Blocklist{}}
+
+	job, err := service.Start(t.Context(), "s1", strings.Repeat("a", 40), "", "SSD", nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, "busy-ssd", job.WorkerID)
+	// And the choice is on the record, so a later job for it lands in the same
+	// place rather than wherever the next placement feels like.
+	require.Equal(t, "SSD", job.Storage)
+}
+
+func TestStartWithoutAChoiceTakesTheLeastLoadedAsBefore(t *testing.T) {
+	r := newRegistry(t)
+	signer, err := LoadOrCreateSigner("")
+	require.NoError(t, err)
+	live(r, "idle-plain", Heartbeat{Leases: 0, MaxLeases: 8, MaxTorrents: 10})
+	live(r, "busy-ssd", Heartbeat{Leases: 5, MaxLeases: 8, MaxTorrents: 10,
+		Storage: []StoragePlace{{Label: "SSD"}}})
+	service := &Service{Registry: r, Hub: NewHub(r, signer, "secret"), Signer: signer, Blocklist: &Blocklist{}}
+
+	job, err := service.Start(t.Context(), "s1", strings.Repeat("a", 40), "", "", nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, "idle-plain", job.WorkerID)
+	require.Empty(t, job.Storage)
 }

@@ -117,9 +117,13 @@ func remuxErrorStatus(err error) (int, string) {
 }
 
 type startRequest struct {
-	InfoHash  string   `json:"infoHash"`
-	Trackers  []string `json:"trackers"`
-	DN        string   `json:"dn"`
+	InfoHash string   `json:"infoHash"`
+	Trackers []string `json:"trackers"`
+	DN       string   `json:"dn"`
+	// Storage is the label of one of the places the fleet published, or ""
+	// for whatever the worker uses by default. Never a path: the page picks
+	// from a list the workers publish, so there is nothing here to traverse.
+	Storage   string   `json:"storage"`
 	Preferred []string `json:"preferred"`
 }
 
@@ -196,7 +200,12 @@ func startTorrent(service *worker.Service) gin.HandlerFunc {
 		if len(req.Preferred) > 8 {
 			req.Preferred = req.Preferred[:8]
 		}
-		job, err := service.Start(c.Request.Context(), SessionID(c), strings.ToLower(req.InfoHash), req.DN, trackers, req.Preferred)
+		if len(req.Storage) > 32 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "unknown_storage"})
+			return
+		}
+		job, err := service.Start(c.Request.Context(), SessionID(c),
+			strings.ToLower(req.InfoHash), req.DN, req.Storage, trackers, req.Preferred)
 		if err != nil {
 			status, code := torrentErrorStatus(err)
 			c.JSON(status, gin.H{"error": code})
@@ -343,6 +352,8 @@ func torrentErrorStatus(err error) (int, string) {
 		return http.StatusNotFound, "job_not_found"
 	case errors.Is(err, worker.ErrNotListed):
 		return http.StatusConflict, "not_listed"
+	case errors.Is(err, worker.ErrUnknownStorage):
+		return http.StatusBadRequest, "unknown_storage"
 	case errors.Is(err, worker.ErrWorkerGone):
 		return http.StatusServiceUnavailable, "worker_gone"
 	case errors.As(err, &werr):

@@ -17,6 +17,8 @@ pub struct WorkerConfig {
     pub server_url: String,
     pub enrollment_token: Option<String>,
     pub data_dir: PathBuf,
+    /// Onde os filmes podem ficar. Sempre com ao menos um lugar.
+    pub places: crate::storage::Places,
     pub public_ip: Option<IpAddr>,
     pub public_hostname: Option<String>,
     pub bt_listen_port: u16,
@@ -84,22 +86,8 @@ const GB: u64 = 1024 * 1024 * 1024;
 const QUOTA_FALLBACK_GB: u64 = 120;
 const QUOTA_SHARE_PCT: u64 = 80;
 
-#[cfg(unix)]
 fn filesystem_bytes(dir: &std::path::Path) -> Option<u64> {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-    let path = CString::new(dir.as_os_str().as_bytes()).ok()?;
-    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
-    if unsafe { libc::statvfs(path.as_ptr(), &mut stat) } != 0 {
-        return None;
-    }
-    let total = stat.f_blocks as u64 * stat.f_frsize as u64;
-    (total > 0).then_some(total)
-}
-
-#[cfg(not(unix))]
-fn filesystem_bytes(_dir: &std::path::Path) -> Option<u64> {
-    None
+    crate::storage::filesystem(dir).map(|(total, _)| total).filter(|total| *total > 0)
 }
 
 fn disk_quota_bytes(data_dir: &std::path::Path) -> anyhow::Result<u64> {
@@ -160,7 +148,9 @@ impl WorkerConfig {
             None => None,
         };
         let data_dir = PathBuf::from(env("SS_WORKER_DATA_DIR").unwrap_or_else(|| "./data".into()));
+        let places = crate::storage::Places::parse(env("SS_WORKER_STORAGE_DIRS").as_deref(), &data_dir)?;
         let cfg = Self {
+            places,
             server_url: env("SS_WORKER_SERVER_URL").context("SS_WORKER_SERVER_URL is required")?,
             enrollment_token: env("SS_WORKER_ENROLLMENT_TOKEN"),
             disk_quota_bytes: disk_quota_bytes(&data_dir)?,

@@ -32,6 +32,9 @@ pub struct Job {
     pub jti: Option<String>,
     #[serde(default)]
     pub keep: Option<bool>,
+    /// O rótulo do lugar onde este torrent deve ficar. Ausente é o padrão.
+    #[serde(default)]
+    pub storage: Option<String>,
     #[serde(default)]
     pub limits: Option<Limits>,
     #[serde(default)]
@@ -162,6 +165,7 @@ mod tests {
             trackers: vec![],
             jti: None,
             keep: None,
+            storage: None,
             limits: None,
             remux: None,
             youtube: None,

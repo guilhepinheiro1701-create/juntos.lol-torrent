@@ -42,6 +42,10 @@ var (
 	ErrNotYours    = errors.New("not_your_job")
 	ErrNotListed   = errors.New("not_listed")
 	ErrDisabled    = errors.New("no_workers")
+	// ErrUnknownStorage means no healthy worker offers the storage place the
+	// request named. Better than quietly using another one: a viewer who
+	// chose a disk chose it for a reason.
+	ErrUnknownStorage = errors.New("unknown_storage")
 )
 
 // WorkerError carries a worker's own rejection code.
@@ -116,7 +120,10 @@ func (s *Service) ProbeList(infohash, audience string) []ProbeTarget {
 // Start registers an infohash for a session: blocklist, quota, placement,
 // then the lease job in the background; the listing arrives through Get.
 // `preferred` is the page's own ranking from its probes and wins when it fits.
-func (s *Service) Start(ctx context.Context, sessionID, infohash, name string, trackers, preferred []string) (*JobRecord, error) {
+// Start places a torrent on a worker. storage names one of the places that
+// worker published, or "" for its default; a place no healthy worker offers is
+// refused rather than swapped for another.
+func (s *Service) Start(ctx context.Context, sessionID, infohash, name, storage string, trackers, preferred []string) (*JobRecord, error) {
 	if s.Blocklist.Rejects(infohash, name) {
 		return nil, ErrBlocked
 	}
@@ -130,12 +137,27 @@ func (s *Service) Start(ctx context.Context, sessionID, infohash, name string, t
 	now := time.Now()
 	for _, id := range preferred {
 		candidate, ok := s.Registry.Get(id)
-		if ok && candidate.Healthy(now) && hasRoom(candidate, 0) {
+		if ok && candidate.Healthy(now) && hasRoom(candidate, 0) && offersStorage(candidate, storage) {
 			worker = candidate
 			break
 		}
 	}
+	// The placement above knows nothing about storage, so a named place may
+	// have landed on a worker that does not have it; look for one that does.
+	if !offersStorage(worker, storage) {
+		found := false
+		for _, candidate := range s.Registry.Snapshot() {
+			if candidate.Healthy(now) && hasRoom(candidate, 0) && offersStorage(candidate, storage) {
+				worker, found = candidate, true
+				break
+			}
+		}
+		if !found {
+			return nil, ErrUnknownStorage
+		}
+	}
 	job := &JobRecord{
+		Storage:    storage,
 		ID:         "j_" + randomID(8),
 		SessionID:  sessionID,
 		Infohash:   infohash,
@@ -174,6 +196,7 @@ func (s *Service) resolve(job JobRecord, trackers []string) {
 		Infohash: job.Infohash,
 		LeaseID:  job.LeaseID,
 		Trackers: trackers,
+		Storage:  job.Storage,
 	}, 3*time.Minute)
 	current, loadErr := s.Registry.LoadJob(ctx, job.ID)
 	if loadErr != nil || current == nil {

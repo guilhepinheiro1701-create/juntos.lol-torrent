@@ -197,6 +197,36 @@ export interface FleetMember {
   transferCapBps?: number
   uptimeSecs?: number
   lastSeenSecs: number
+  /** Where this worker was configured to keep films. Absent on older workers. */
+  storage?: StoragePlace[]
+}
+
+/**
+ * One place a worker can store a film. Only the label travels: the page picks
+ * between "SSD" and "HDD", never between directories, and a browser has no
+ * business knowing the worker's paths.
+ */
+export interface StoragePlace {
+  label: string
+  freeBytes: number
+}
+
+/**
+ * The storage places the fleet offers, merged across workers and keeping the
+ * most free space reported for each label. Empty when no worker publishes any,
+ * which is the whole fleet before this existed.
+ */
+export async function storagePlaces(): Promise<StoragePlace[]> {
+  const { workers } = await fleetStatus()
+  const best = new Map<string, StoragePlace>()
+  for (const worker of workers) {
+    if (worker.availability === 'offline') continue
+    for (const place of worker.storage ?? []) {
+      const held = best.get(place.label.toLowerCase())
+      if (!held || place.freeBytes > held.freeBytes) best.set(place.label.toLowerCase(), place)
+    }
+  }
+  return [...best.values()]
 }
 
 export interface Fleet {
@@ -330,6 +360,8 @@ export async function probeWorkers(
 
 export interface OpenTorrentOptions {
   onProbe?: (probes: WorkerProbe[]) => void
+  /** The label of a storage place the fleet published, or nothing for its default. */
+  storage?: string
 }
 
 /**
@@ -348,7 +380,10 @@ export async function openRemoteTorrent(
   const preferred = probes.filter((p) => p.state === 'ok').map((p) => p.id)
   const started = await api<{ jobId: string }>('', {
     method: 'POST',
-    body: JSON.stringify({ infoHash: parsed.infoHash, trackers: parsed.trackers, dn: parsed.dn, preferred }),
+    body: JSON.stringify({
+      infoHash: parsed.infoHash, trackers: parsed.trackers, dn: parsed.dn, preferred,
+      ...(options?.storage ? { storage: options.storage } : {}),
+    }),
   })
   const jobId = started.jobId
   let statsTimer: ReturnType<typeof setInterval> | null = null

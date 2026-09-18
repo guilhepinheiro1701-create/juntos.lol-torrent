@@ -12,6 +12,8 @@ pub enum Rejection {
     NoMetadata,
     NotVideo,
     NoSuchFile,
+    /// Pediram um lugar de armazenamento que esta instalação não publicou.
+    UnknownStorage,
     Unknown,
     Internal(anyhow::Error),
 }
@@ -26,6 +28,7 @@ impl Rejection {
             Rejection::NoMetadata => "no_metadata",
             Rejection::NotVideo => "not_video",
             Rejection::NoSuchFile => "no_such_file",
+            Rejection::UnknownStorage => "unknown_storage",
             Rejection::Unknown => "unknown_torrent",
             Rejection::Internal(_) => "internal",
         }

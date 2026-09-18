@@ -71,6 +71,7 @@ type Job struct {
 	Trackers  []string    `json:"trackers,omitempty"`
 	JTI       string      `json:"jti,omitempty"`
 	Keep      *bool       `json:"keep,omitempty"`
+	Storage   string      `json:"storage,omitempty"`
 	Remux     any         `json:"remux,omitempty"`
 	Youtube   *YoutubeJob `json:"youtube,omitempty"`
 	Live      *LiveJob    `json:"live,omitempty"`

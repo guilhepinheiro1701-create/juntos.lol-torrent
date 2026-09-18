@@ -6,6 +6,7 @@ import { openTorrent } from '../torrent'
 import { createRoomAndUploadTorrent } from '../upload'
 import { keepTorrent } from '../remoteTorrent'
 import { useToast } from '../ui/toastContext'
+import { StoragePicker } from './StoragePicker'
 
 /**
  * What this browser has kept on disk, and the way back into it.
@@ -71,6 +72,7 @@ export function LibraryShelf({ t, onOpened }: {
       <div className="library-empty">
         <h2>{t('library.emptyTitle')}</h2>
         <p>{t('library.emptyGuide')}</p>
+        <StoragePicker t={t} />
       </div>
     )
   }
@@ -78,6 +80,7 @@ export function LibraryShelf({ t, onOpened }: {
   return (
     <div className="library-shelf">
       <h2>{t('library.title')}</h2>
+      <StoragePicker t={t} />
       <ul className="library-list">
         {entries.map((entry) => (
           <li key={entry.roomId} className="library-card">

@@ -5,6 +5,7 @@ mod engine;
 mod http;
 mod metrics;
 mod ticket;
+mod storage;
 mod torrent_source;
 mod watchdog;
 

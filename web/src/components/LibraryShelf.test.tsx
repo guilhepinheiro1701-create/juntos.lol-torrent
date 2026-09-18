@@ -9,7 +9,7 @@ import { keepTorrent } from '../remoteTorrent'
 
 vi.mock('../torrent', () => ({ openTorrent: vi.fn() }))
 vi.mock('../upload', () => ({ createRoomAndUploadTorrent: vi.fn() }))
-vi.mock('../remoteTorrent', () => ({ keepTorrent: vi.fn() }))
+vi.mock('../remoteTorrent', () => ({ keepTorrent: vi.fn(), storagePlaces: vi.fn().mockResolvedValue([]) }))
 
 const t = ((key: string) => key) as Translator
 

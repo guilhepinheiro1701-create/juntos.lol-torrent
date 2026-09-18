@@ -2,27 +2,29 @@ package worker
 
 import (
 	"sort"
+	"strings"
 	"time"
 )
 
 // FleetMember is one worker as the status page sees it. Deliberately no
 // address: the page ranks the fleet, it does not dial it.
 type FleetMember struct {
-	ID              string  `json:"id"`
-	Version         string  `json:"version,omitempty"`
-	Availability    string  `json:"availability"`
-	Load            float64 `json:"load"`
-	Leases          int     `json:"leases"`
-	MaxLeases       int     `json:"maxLeases,omitempty"`
-	Torrents        int     `json:"torrents"`
-	MaxTorrents     int     `json:"maxTorrents,omitempty"`
-	DiskUsed        int64   `json:"diskUsed"`
-	DiskReal        int64   `json:"diskReal"`
-	DiskQuota       int64   `json:"diskQuota,omitempty"`
-	TransferUsedBps int64   `json:"transferUsedBps"`
-	TransferCapBps  int64   `json:"transferCapBps,omitempty"`
-	UptimeSecs      int64   `json:"uptimeSecs,omitempty"`
-	LastSeenSecs    int64   `json:"lastSeenSecs"`
+	ID              string         `json:"id"`
+	Version         string         `json:"version,omitempty"`
+	Availability    string         `json:"availability"`
+	Load            float64        `json:"load"`
+	Leases          int            `json:"leases"`
+	MaxLeases       int            `json:"maxLeases,omitempty"`
+	Torrents        int            `json:"torrents"`
+	MaxTorrents     int            `json:"maxTorrents,omitempty"`
+	DiskUsed        int64          `json:"diskUsed"`
+	DiskReal        int64          `json:"diskReal"`
+	DiskQuota       int64          `json:"diskQuota,omitempty"`
+	TransferUsedBps int64          `json:"transferUsedBps"`
+	TransferCapBps  int64          `json:"transferCapBps,omitempty"`
+	UptimeSecs      int64          `json:"uptimeSecs,omitempty"`
+	LastSeenSecs    int64          `json:"lastSeenSecs"`
+	Storage         []StoragePlace `json:"storage,omitempty"`
 }
 
 // availabilityRank orders the categories the way a person would want to be
@@ -60,6 +62,7 @@ func (r *Registry) Fleet(now time.Time) []FleetMember {
 			DiskQuota:    hb.Disk.Quota,
 			UptimeSecs:   hb.UptimeSecs,
 			LastSeenSecs: int64(now.Sub(w.LastSeen).Seconds()),
+			Storage:      hb.Storage,
 		}
 		if hb.Transfer != nil {
 			member.TransferUsedBps = hb.Transfer.UsedBps
@@ -99,4 +102,18 @@ func (s *Service) Fleet() []FleetMember {
 		return nil
 	}
 	return s.Registry.Fleet(time.Now())
+}
+
+// offersStorage reports whether a worker has the named storage place. An empty
+// name is every worker's default, so it always fits.
+func offersStorage(w Worker, label string) bool {
+	if label == "" {
+		return true
+	}
+	for _, place := range w.Heartbeat.Storage {
+		if strings.EqualFold(place.Label, label) {
+			return true
+		}
+	}
+	return false
 }

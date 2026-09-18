@@ -1,5 +1,6 @@
 import { mockOpenTorrent, mocksEnabled } from './mocks'
 import { openRemoteTorrent, type OpenTorrentOptions } from './remoteTorrent'
+import { storagePreference } from './storagePlace'
 
 export { NoWorkersError, TorrentQuotaError, TorrentRejectedError, WorkersBusyError, parseMagnet, probeWorkers } from './remoteTorrent'
 export type { OpenTorrentOptions, WorkerProbe } from './remoteTorrent'
@@ -66,5 +67,9 @@ export async function openTorrent(
   options?: OpenTorrentOptions,
 ): Promise<TorrentSession> {
   if (mocksEnabled) return mockOpenTorrent(onStats)
-  return await openRemoteTorrent(magnet, onStats, options)
+  // The disk preference is read here rather than threaded through every
+  // caller: it is the same answer for all of them, and this is the one door
+  // they all go through.
+  const storage = options?.storage ?? storagePreference()
+  return await openRemoteTorrent(magnet, onStats, { ...options, ...(storage ? { storage } : {}) })
 }

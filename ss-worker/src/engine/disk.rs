@@ -9,17 +9,19 @@ pub struct DiskAccountant {
     quota: u64,
     high_water: u64,
     reserved: Mutex<HashMap<String, u64>>,
-    dir: PathBuf,
+    /// Todos os lugares onde um torrent pode estar: contar só um deles daria
+    /// um número menor que a verdade, e a cota é decidida em cima dele.
+    dirs: Vec<PathBuf>,
     real: Mutex<(u64, Option<Instant>)>,
 }
 
 impl DiskAccountant {
-    pub fn new(quota: u64, high_water: u64, dir: PathBuf) -> Self {
+    pub fn new(quota: u64, high_water: u64, dirs: Vec<PathBuf>) -> Self {
         Self {
             quota,
             high_water,
             reserved: Mutex::new(HashMap::new()),
-            dir,
+            dirs,
             real: Mutex::new((0, None)),
         }
     }
@@ -33,7 +35,7 @@ impl DiskAccountant {
                 return cached.0;
             }
         }
-        let total = allocated_under(&self.dir);
+        let total = self.dirs.iter().map(|dir| allocated_under(dir)).sum();
         *self.real.lock() = (total, Some(Instant::now()));
         total
     }
@@ -130,7 +132,7 @@ mod tests {
 
     #[test]
     fn reserves_under_high_water_and_replaces() {
-        let d = DiskAccountant::new(100, 90, PathBuf::from("/tmp"));
+        let d = DiskAccountant::new(100, 90, vec![PathBuf::from("/tmp")]);
         assert!(d.reserve("a", 50));
         assert!(d.reserve("b", 40));
         assert!(!d.reserve("c", 1));
@@ -151,7 +153,7 @@ mod tests {
         let nested = dir.join("nested");
         std::fs::create_dir_all(&nested).unwrap();
         std::fs::write(nested.join("piece"), vec![7u8; 8192]).unwrap();
-        let d = DiskAccountant::new(100, 90, dir.clone());
+        let d = DiskAccountant::new(100, 90, vec![dir.clone()]);
         let used = d.real_used();
         assert!(
             used >= 8192,
