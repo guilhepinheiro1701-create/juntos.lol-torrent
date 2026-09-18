@@ -177,3 +177,52 @@ describe('build info', () => {
     expect(screen.queryByRole('link', { name: /^[0-9a-f]{7}$/ })).not.toBeInTheDocument()
   })
 })
+
+describe('the downloads tab', () => {
+  beforeEach(() => localStorage.clear())
+
+  // A fourth tab on a browser that has never downloaded anything is a door
+  // onto an empty room.
+  it('stays hidden until something has been downloaded', () => {
+    render(<MemoryRouter><Home /></MemoryRouter>)
+
+    expect(screen.queryByRole('tab', { name: /downloads|baixados/i })).not.toBeInTheDocument()
+  })
+
+  it('appears once the library holds something, and opens onto it', async () => {
+    localStorage.setItem('ss.library', JSON.stringify([
+      { roomId: 'r1', jobId: 'j1', fileName: 'Duna.mkv', title: 'Duna', savedAt: Date.now() },
+    ]))
+    render(<MemoryRouter><Home /></MemoryRouter>)
+
+    fireEvent.click(screen.getByRole('tab', { name: /downloads|baixados/i }))
+
+    expect(await screen.findByText('Duna')).toBeInTheDocument()
+  })
+
+  // Its own address, like every other tab, so it can be a bookmark.
+  it('opens straight from its own URL', async () => {
+    localStorage.setItem('ss.library', JSON.stringify([
+      { roomId: 'r1', jobId: 'j1', fileName: 'Duna.mkv', title: 'Duna', savedAt: Date.now() },
+    ]))
+    render(
+      <MemoryRouter initialEntries={['/downloads']}>
+        <Routes><Route path="*" element={<Home />} /></Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByText('Duna')).toBeInTheDocument()
+  })
+
+  // Reached by its URL on a browser with nothing in it, the tab has to be
+  // there: otherwise the page shows a shelf with no way back to itself.
+  it('shows its own tab even on an empty library when opened by URL', async () => {
+    render(
+      <MemoryRouter initialEntries={['/downloads']}>
+        <Routes><Route path="*" element={<Home />} /></Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByRole('tab', { name: /downloads|baixados/i })).toBeInTheDocument()
+  })
+})

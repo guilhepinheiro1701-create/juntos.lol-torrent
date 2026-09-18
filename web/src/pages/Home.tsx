@@ -6,6 +6,8 @@ import { YoutubeGlyph } from '../ui/YoutubeGlyph'
 import { useT } from '../i18n/useT'
 import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl, createRoomAndUploadYoutube, isUnreadableFile, youtubeFileName, type UploadProgress } from '../upload'
 import { BuildInfo } from '../components/BuildInfo'
+import { LibraryShelf } from '../components/LibraryShelf'
+import { library } from '../library'
 import { roomCodeFrom } from '../roomCode'
 import { DiscordLink } from '../components/DiscordLink'
 import { JlocalDownload, JlocalStatus } from '../components/JlocalPill'
@@ -41,7 +43,7 @@ import type { TitleOpen } from '../catalog/PosterCard'
 import { MAX_UPLOAD_BYTES } from '../limits'
 import { Mark, Wordmark, WRITES_ON_LOAD } from '../ui/Brand'
 
-type HomeView = 'catalog' | 'manual' | 'status'
+type HomeView = 'catalog' | 'manual' | 'status' | 'library'
 export { MAX_UPLOAD_BYTES }
 
 // The manual-upload panel's steps; false is the panel being shut.
@@ -109,14 +111,23 @@ export function Home() {
   const [joinDraft, setJoinDraft] = useState('')
   const [joinError, setJoinError] = useState('')
   const view: HomeView = location.pathname.startsWith('/status') ? 'status'
-    : location.pathname.startsWith('/catalog') || location.pathname.startsWith('/title/') ? 'catalog'
-      : 'manual'
+    : location.pathname.startsWith('/downloads') ? 'library'
+      : location.pathname.startsWith('/catalog') || location.pathname.startsWith('/title/') ? 'catalog'
+        : 'manual'
 
   const showView = (next: HomeView) => {
     if (next === view) return
     window.scrollTo({ top: 0 })
-    navigate(next === 'manual' ? '/' : `/${next}`, { state: null })
+    navigate(next === 'manual' ? '/' : next === 'library' ? '/downloads' : `/${next}`, { state: null })
   }
+
+  // The downloads tab appears once there is something in it, and stays while
+  // it is open: a fourth tab on a browser that has never downloaded anything
+  // is a door onto an empty room.
+  const [hasDownloads] = useState(() => library().length > 0)
+  const tabs: HomeView[] = hasDownloads || view === 'library'
+    ? ['catalog', 'manual', 'library', 'status']
+    : ['catalog', 'manual', 'status']
 
   useEffect(() => {
     setError('')
@@ -428,7 +439,7 @@ export function Home() {
           <JlocalStatus status={jlocal} t={t} />
         </div>
         <div className="header-tabs" role="tablist" aria-label={t('home.ways')}>
-          {(['catalog', 'manual', 'status'] as const).map((value) => (
+          {tabs.map((value) => (
             <button
               key={value}
               type="button"
@@ -445,7 +456,10 @@ export function Home() {
                 />
               ) : null}
               <span className="season-tab-label">
-                {value === 'catalog' ? t('home.tabCatalog') : value === 'manual' ? t('home.tabOwn') : t('home.tabStatus')}
+                {value === 'catalog' ? t('home.tabCatalog')
+                  : value === 'manual' ? t('home.tabOwn')
+                    : value === 'library' ? t('home.tabDownloads')
+                      : t('home.tabStatus')}
               </span>
             </button>
           ))}
@@ -464,6 +478,8 @@ export function Home() {
       <section className="catalog-stage">
         {view === 'status' ? (
           <FleetStatus />
+        ) : view === 'library' ? (
+          <LibraryShelf t={t} onOpened={(roomId) => navigate(`/room/${roomId}`)} />
         ) : view === 'catalog' ? (
           <CatalogBrowser onOpenTitle={openTitle} hideSearch={detailsOpen !== null} />
         ) : (

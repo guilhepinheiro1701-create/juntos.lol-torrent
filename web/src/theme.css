@@ -1027,3 +1027,20 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .live-title { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 14px; }
 .live-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; background: #e0242b; color: #fff; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; }
 .live-button { padding: 6px 12px; font-size: 13px; }
+
+/* Baixados: o que ficou no disco, e a volta para dentro dele. */
+.library-shelf { padding: 8px 0 40px; }
+.library-shelf > h2 { margin: 0 0 18px; font-size: 25px; letter-spacing: -.035em; }
+.library-list { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); list-style: none; margin: 0; padding: 0; }
+.library-card { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--r-surface); background: var(--card); }
+.library-card:hover { background: var(--card-hover); }
+.library-poster { flex: 0 0 auto; width: 46px; height: 68px; object-fit: cover; border-radius: var(--r-control); background: var(--well); }
+.library-poster.is-blank { display: block; }
+.library-name { flex: 1 1 auto; min-width: 0; overflow: hidden; font-size: 14px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.library-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
+.library-actions .primary-button { display: inline-flex; align-items: center; gap: 6px; padding: 9px 14px; font-size: 13px; }
+.library-actions .secondary-button { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; color: var(--text-dim); }
+.library-actions .secondary-button:hover { color: var(--danger); }
+.library-empty { padding: 60px 0; text-align: center; }
+.library-empty h2 { margin: 0 0 8px; font-size: 25px; letter-spacing: -.035em; }
+.library-empty p { max-width: 460px; margin: 0 auto; color: var(--text-dim); font-size: 14px; line-height: 1.5; }
