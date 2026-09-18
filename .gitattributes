@@ -1,0 +1,11 @@
+# Os .bat precisam sair do checkout com CRLF. Um batch com final de linha LF
+# erra de formas difíceis de ler: `goto` não acha o rótulo, o último argumento
+# de uma linha carrega um \r invisível. start.bat usa goto, então isto não é
+# teórico.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# E os scripts de shell precisam sair com LF, mesmo num Windows configurado
+# para converter tudo: um shebang seguido de \r não é um shebang.
+*.sh text eol=lf

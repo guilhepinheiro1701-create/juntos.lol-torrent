@@ -1,3 +1,9 @@
+> **Nota:** este README ainda descreve a versão em nuvem, com watch party, chat,
+> compartilhamento de tela e reprodução sincronizada. Esta ramificação removeu
+> tudo isso: é um app de um espectador só, na própria máquina. Veja
+> [RODAR-LOCAL.md](RODAR-LOCAL.md) para o que existe hoje. A atualização do
+> resto deste arquivo ainda não foi feita.
+
 # juntos.lol
 
 [juntos.lol](https://juntos.lol) é uma aplicação de watch party: envie um vídeo ou abra um magnet, compartilhe a sala e assista com outras pessoas usando reprodução sincronizada, chat, múltiplos áudios, legendas e compartilhamento de tela.
@@ -175,9 +181,6 @@ O Vite serve apenas o frontend durante o desenvolvimento. Para exercitar upload,
 | `MAX_PARTICIPANTS` | `20` | Máximo de conexões simultâneas por sala. |
 | `ROOM_IDLE_SECONDS` | `90` | Tempo sem participantes até a sala ser recolhida: registro no Redis, diretório em disco e mídia no bucket. |
 | `UPLOAD_IDLE_MINUTES` | `10` | Tempo sem atividade até o claim de um remux ser devolvido. |
-| `MOQ_RELAY_URL` | vazio | Relay MoQ da Cloudflare, por exemplo `https://draft-16.cloudflare.mediaoverquic.com`. Sem ele o compartilhamento de tela fica desligado. |
-| `MOQ_PUBLISH_TOKEN` | vazio | Token do relay com `publish` e `subscribe`, entregue só ao controlador da sala. |
-| `MOQ_SUBSCRIBE_TOKEN` | vazio | Token do relay só com `subscribe`, entregue aos demais participantes. |
 
 Valores inválidos em variáveis numéricas impedem a inicialização, em vez de cair silenciosamente para outro valor.
 
@@ -187,17 +190,18 @@ Valores inválidos em variáveis numéricas impedem a inicialização, em vez de
 
 `PLUGIN_FETCH_PROXY` (opcional) é um proxy `http`, `https` ou `socks5` por onde saem as requisições que o servidor faz em nome dos plugins (`GET /api/plugins/fetch`). Serve para quando um addon recusa o endereço da própria instância — o Torrentio bloqueia faixas de datacenter — e a saída precisa vir de outro lugar. A resolução de nomes passa a acontecer no proxy, então a guarda contra endereços privados vale para a rede dele; a política de URL (só `https`, só nomes, nunca o próprio servidor, em cada redirect) continua aqui.
 
+## Rodar na sua máquina
+
+`setup.bat` uma vez, `start.bat` sempre que quiser, `stop.bat` para desligar — ou os `.sh` equivalentes no Linux e no macOS. A única dependência é o Docker; a pilha inteira (servidor, worker, MinIO no lugar do R2, Redis) sobe em containers e publica só em `127.0.0.1`. [RODAR-LOCAL.md](RODAR-LOCAL.md) tem o detalhe, incluindo como apontar os downloads para discos seus.
+
 ## Produção
 
-O container `app` publica apenas em loopback por padrão. Coloque um proxy TLS, como Caddy ou nginx, na frente de `127.0.0.1:8099`. Para compartilhamento de tela, crie um relay MoQ na conta Cloudflare (Media › Realtime › MoQ Relay, ou `POST /accounts/{id}/moq/relays`) e coloque a URL do relay e o par de tokens padrão nas variáveis `MOQ_*`. O relay faz o fan-out para os viewers; a VPS não carrega mídia nem expõe porta nova. Um relay aceita no máximo 10 tokens, por isso os tokens são por instalação e não por sala: o que isola uma sala da outra é o segredo no caminho do broadcast.
+O container `app` publica apenas em loopback por padrão. Coloque um proxy TLS, como Caddy ou nginx, na frente de `127.0.0.1:8099`.
 
 Exemplo mínimo de variáveis:
 
 ```dotenv
 APP_BIND=127.0.0.1:8099
-MOQ_RELAY_URL=https://draft-16.cloudflare.mediaoverquic.com
-MOQ_PUBLISH_TOKEN=eyJ...
-MOQ_SUBSCRIBE_TOKEN=eyJ...
 ```
 
 Segredos e ajustes locais de deploy ficam num override do Compose mantido fora do repositório.
