@@ -1,19 +1,15 @@
 import { Suspense, useCallback, useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'react'
 import { AnimatePresence, motion, useReducedMotion, LayoutGroup } from 'motion/react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import { FolderOpen, LogIn, MonitorUp, Puzzle, Upload } from 'lucide-react'
+import { FolderOpen, LogIn, Puzzle, Upload } from 'lucide-react'
 import { YoutubeGlyph } from '../ui/YoutubeGlyph'
 import { useT } from '../i18n/useT'
-import { isScreenShareCancelled, requestScreenStream, screenShareSupported, stashScreenStream } from '../screenshare'
-import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl, createRoomAndUploadYoutube, createScreenRoom, isUnreadableFile, youtubeFileName, type UploadProgress } from '../upload'
+import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl, createRoomAndUploadYoutube, isUnreadableFile, youtubeFileName, type UploadProgress } from '../upload'
 import { BuildInfo } from '../components/BuildInfo'
 import { roomCodeFrom } from '../roomCode'
 import { DiscordLink } from '../components/DiscordLink'
 import { JlocalDownload, JlocalStatus } from '../components/JlocalPill'
 import { useJLocal } from '../jlocal/status'
-import { isJLocalCaptureAvailable } from '../jlocal/capabilities'
-import { JlocalPicker } from '../screen/JlocalPicker'
-import { stashJlocalPick, type JlocalPick } from '../screen/useScreenShare'
 import { PluginsPanel } from '../plugins/PluginsPanel'
 import { Onboarding } from '../onboarding/Onboarding'
 import { playError } from '../onboarding/sounds'
@@ -49,7 +45,7 @@ type HomeView = 'catalog' | 'manual' | 'status'
 export { MAX_UPLOAD_BYTES }
 
 // The manual-upload panel's steps; false is the panel being shut.
-type ManualStep = false | 'menu' | 'file' | 'magnet' | 'youtube' | 'drive' | 'screen' | 'join'
+type ManualStep = false | 'menu' | 'file' | 'magnet' | 'youtube' | 'drive' | 'join'
 const HISTORY_KEY = 'ss.room-history.v1'
 
 interface RoomHistoryEntry {
@@ -63,8 +59,6 @@ type PendingMedia =
   | { kind: 'torrent'; file: TorrentVideoFile; session: TorrentSession }
   | { kind: 'youtube'; session: YoutubeSession }
   | { kind: 'drive'; file: TorrentVideoFile; session: TorrentSession }
-  | { kind: 'screen'; stream: MediaStream }
-  | { kind: 'jlocalScreen'; pick: JlocalPick }
   | { kind: 'stream'; pick: TitlePick }
 
 // Router state must be serializable, so the morph origin travels as numbers.
@@ -153,27 +147,8 @@ export function Home() {
     }
     : null
 
-  const startScreenRoomNative = () => {
-    setManualOpen(false)
-    if (!screenShareSupported()) { setError(t('error.screenUnsupported')); return }
-    void requestScreenStream().then((stream) => {
-      setError('')
-      setDraftNickname(nickname)
-      setPendingMedia({ kind: 'screen', stream })
-    }).catch((error: unknown) => {
-      if (!isScreenShareCancelled(error)) setError(t('error.screenshare'))
-    })
-  }
-
-  const startScreenRoom = () => {
-    if (!screenShareSupported()) { setError(t('error.screenUnsupported')); return }
-    if (isJLocalCaptureAvailable()) { setError(''); setManualOpen('screen'); return }
-    startScreenRoomNative()
-  }
-
   const discardPending = (media: PendingMedia | null) => {
     if (media?.kind === 'torrent' || media?.kind === 'drive' || media?.kind === 'youtube') media.session.destroy()
-    if (media?.kind === 'screen') media.stream.getTracks().forEach((track) => track.stop())
   }
 
   const selectFile = (file?: File) => {
@@ -211,8 +186,7 @@ export function Home() {
     setPendingMedia(null)
     setStarting(true)
     setStartingLabel(
-      media.kind === 'screen' || media.kind === 'jlocalScreen' ? t('room.screenLabel')
-        : media.kind === 'stream' ? media.pick.displayName
+      media.kind === 'stream' ? media.pick.displayName
           : media.kind === 'youtube' ? youtubeFileName(media.session)
             : media.file.name,
     )
@@ -248,7 +222,7 @@ export function Home() {
         try {
           if (playing) localStorage.setItem(nowPlayingKey(room.roomID), JSON.stringify(playing))
         } catch {}
-      } else if (media.kind === 'stream') {
+      } else {
         closeTitle()
         setProgress({ phase: 'converting', pct: 0 })
         setStreamProbes([])
@@ -265,12 +239,7 @@ export function Home() {
         try {
           if (playing) localStorage.setItem(nowPlayingKey(room.roomID), JSON.stringify(playing))
         } catch {}
-      } else {
-        room = await createScreenRoom(draftNickname.trim())
-        fileName = t('room.screenLabel')
       }
-      if (media.kind === 'screen') stashScreenStream(room.roomID, media.stream)
-      if (media.kind === 'jlocalScreen') stashJlocalPick(room.roomID, media.pick)
       setNickname(room.nickname)
       localStorage.setItem('ss.nickname', room.nickname)
       const nextHistory = [
@@ -326,9 +295,6 @@ export function Home() {
             </button>
             <button onClick={() => { setError(''); setManualOpen('drive') }}>
               <FolderOpen size={18} aria-hidden="true" />{t('home.openDrive')}
-            </button>
-            <button onClick={startScreenRoom}>
-              <MonitorUp size={18} aria-hidden="true" />{t('home.shareScreen')}
             </button>
             <button onClick={() => { setJoinDraft(''); setJoinError(''); setManualOpen('join') }}>
               <LogIn size={18} aria-hidden="true" />{t('home.joinRoom')}
@@ -429,20 +395,6 @@ export function Home() {
         </div>
       ) : null}
 
-      {shownManual === 'screen' ? (
-        <div className="morph-step" data-step="screen">
-          <JlocalPicker
-            t={t}
-            onExit={() => setManualOpen('menu')}
-            onPick={(pick) => {
-              setManualOpen(false)
-              setError('')
-              setDraftNickname(nickname)
-              setPendingMedia({ kind: 'jlocalScreen', pick })
-            }}
-          />
-        </div>
-      ) : null}
 
       {shownManual === 'drive' ? (
         <div className="morph-step" data-step="drive">
@@ -589,8 +541,7 @@ export function Home() {
             description={t('home.dialogGuide')}
           >
             <span className="dialog-file">
-              {pendingMedia.kind === 'screen' || pendingMedia.kind === 'jlocalScreen' ? t('home.screenDialog')
-                : pendingMedia.kind === 'stream' ? pendingMedia.pick.displayName
+              {pendingMedia.kind === 'stream' ? pendingMedia.pick.displayName
                   : pendingMedia.kind === 'youtube' ? youtubeFileName(pendingMedia.session)
                     : pendingMedia.file.name}
             </span>

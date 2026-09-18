@@ -15,7 +15,6 @@ import type { ClientRemuxHandle } from './pipeline/clientMedia'
 import { jobIsCloneable, sourceSize, type RemuxJob, type RemuxSideFile, type RemuxSource } from './pipeline/remuxTypes'
 import { FILE_UNREADABLE, REMUX_UNAVAILABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, isUnreadableFile, readFailureCode } from './uploadErrors'
 import { backendFor, type YoutubeSession } from './youtube'
-import { stopLive } from './live'
 
 export { FILE_UNREADABLE, REMUX_UNAVAILABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, WORKER_UNREACHABLE, isUnreadableFile } from './uploadErrors'
 
@@ -101,7 +100,6 @@ export function unregisterRemuxHandle(roomID: string, handle: ClientRemuxHandle)
 }
 
 function releaseExternal(roomID: string): void {
-  stopLive(roomID)
   const stop = externalStops.get(roomID)
   if (!stop) return
   externalStops.delete(roomID)
@@ -143,7 +141,7 @@ export function uploadActive(roomID: string): boolean {
 // room can pick the preparo back up. A picked File has no way back.
 
 export interface ResumableSource {
-  kind: 'torrent' | 'url' | 'youtube' | 'live'
+  kind: 'torrent' | 'url' | 'youtube'
   fileName: string
   magnet?: string
   filePath?: string
@@ -192,15 +190,9 @@ async function createRoom(fileName: string, nickname: string, kind?: string): Pr
   return created
 }
 
-export async function createScreenRoom(nickname: string): Promise<UploadResult> {
-  if (mocksEnabled) return mockCreateRoom(nickname)
-  const room = await createRoom('', nickname, 'screen')
-  return { roomID: room.id, nickname: room.nickname }
-}
-
 export interface RoomSource {
   status: string
-  sourceKind: 'upload' | 'screen'
+  sourceKind: 'upload'
   fileName: string
   mediaGeneration: number
 }
@@ -210,7 +202,7 @@ export async function changeRoomSource(
   roomID: string,
   memberId: string,
   capability: string,
-  kind: 'upload' | 'screen' | 'youtube',
+  kind: 'upload' | 'youtube',
   fileName?: string,
 ): Promise<RoomSource> {
   const response = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/source`, {
@@ -292,11 +284,10 @@ export async function createRoomAndUploadYoutube(
   if (mocksEnabled) return mockCreateRoom(nickname)
   const created = await createRoom(youtubeFileName(session), nickname, 'youtube')
   if (session.summary.live) {
-    // The room starts the live once it knows who its controller is: the
-    // producer needs the member's seat, which only the room hands out.
-    saveResumableSource(created.id, { kind: 'live', fileName: youtubeFileName(session), url: session.url })
+    // Uma transmissão ao vivo só tocava pelo relay MoQ, que não existe na
+    // versão local. Vídeo do YouTube comum continua funcionando.
     session.destroy()
-    return { roomID: created.id, nickname: created.nickname }
+    throw new Error('live streams are not supported')
   }
   startYoutubeUpload(created.id, 0, session)
   return { roomID: created.id, nickname: created.nickname }

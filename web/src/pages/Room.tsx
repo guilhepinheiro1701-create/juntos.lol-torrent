@@ -3,27 +3,17 @@ import { JlocalDownload, JlocalStatus } from '../components/JlocalPill'
 import { useJLocal } from '../jlocal/status'
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { Chat } from '../chat/Chat'
-import { useMessageChime } from '../chat/useMessageChime'
 import { ChaptersPanel } from '../player/ChaptersPanel'
 import { StatusPill } from '../components/StatusPill'
 import { CopyErrorReport } from '../components/CopyErrorReport'
 import { StillThere } from '../components/StillThere'
 import { caretToEndOnFocus } from '../ui/caret'
 import { UploadAvailability, type OpeningWait } from '../components/UploadAvailability'
-import { Check, Compass, Crown, FileVideo, Link2, MessageSquare, MonitorUp, Replace, Upload, UserX, X } from 'lucide-react'
+import { Check, Compass, Crown, FileVideo, Link2, Replace, Upload, UserX, X } from 'lucide-react'
 import { YoutubeGlyph } from '../ui/YoutubeGlyph'
 import { useT, type Translator } from '../i18n/useT'
 import { Player, regionHolds } from '../player/Player'
 import { useSync } from '../player/useSync'
-import {
-  dropScreenStream,
-  isScreenShareCancelled,
-  requestScreenStream,
-  screenShareSupported,
-  stashScreenStream,
-} from '../screenshare'
-import { ScreenStage } from '../screen/ScreenStage'
 import { Button } from '../ui/Button'
 import { IconButton } from '../ui/IconButton'
 import { MorphPanel } from '../ui/MorphPanel'
@@ -32,7 +22,7 @@ import { useMorphingStep } from '../ui/useMorphingStep'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import { useToast } from '../ui/toastContext'
 import { playJoinChime } from '../ui/chime'
-import type { ChatEntry, Member, PresenceEvent, RoomInfo, RoomWaiting, TitleRequest } from '../types'
+import type { Member, PresenceEvent, RoomInfo, RoomWaiting, TitleRequest } from '../types'
 import type { OverlayFocus } from '../catalog/CatalogOverlay'
 const CatalogOverlay = lazy(() => import('../catalog/CatalogOverlay').then((module) => ({ default: module.CatalogOverlay })))
 import { openCatalogStream } from '../catalog/openStream'
@@ -42,8 +32,6 @@ import { NextEpisodeCard } from '../catalog/NextEpisode'
 import { nowPlayingFromPick, nowPlayingKey, useNextEpisode, type NowPlaying } from '../catalog/useNextEpisode'
 import { TorrentPicker } from '../components/TorrentPicker'
 import { YoutubePicker } from '../components/YoutubePicker'
-import { LiveStage } from '../components/LiveStage'
-import { startYoutubeLive } from '../live'
 import { YoutubeError, isYoutubeError, openYoutube, youtubeErrorKey, youtubeErrorRetryable, type YoutubeSession } from '../youtube'
 import { PipelineChip } from '../components/PipelineChip'
 import { openTorrent, type TorrentSession, type TorrentVideoFile, type WorkerProbe } from '../torrent'
@@ -280,10 +268,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
           startUrlUpload(room.id, next.mediaGeneration, source.url ?? '', source.fileName, source.size ?? 0)
           return
         }
-        if (source.kind === 'live') {
-          await startYoutubeLive(room.id, { url: source.url ?? '', title: source.fileName }, { memberId: sync.memberId, capability: sync.capability })
-          return
-        }
         if (source.kind === 'youtube') {
           const session = await openYoutube(source.url ?? '')
           try {
@@ -316,22 +300,11 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       }
     })()
   }, [needsPreparo, room.id, room.sourceKind, sync.memberId, sync.capability, t, toast])
-  // On a phone the chat is a drawer over the video, so it starts closed.
-  const [sidePanel, setSidePanel] = useState<'chat' | 'chapters' | null>(() => (
-    typeof window !== 'undefined' && window.matchMedia?.('(max-width: 900px)').matches ? null : 'chat'
-  ))
-  const chatOpen = sidePanel === 'chat'
-  const setChatOpen = (value: boolean | ((open: boolean) => boolean)) => {
-    setSidePanel((panel) => {
-      const next = typeof value === 'function' ? value(panel === 'chat') : value
-      return next ? 'chat' : panel === 'chat' ? null : panel
-    })
-  }
+  const [sidePanel, setSidePanel] = useState<'chapters' | null>(null)
   const [uploadProgress, setUploadProgress] = useState<RoomUploadProgress | null>(null)
   const [uploadFailed, setUploadFailed] = useState<string | null>(null)
   const mediaStatus = sync.roomStatus === 'ready' || sync.roomStatus === 'error' ? sync.roomStatus : liveRoom.status
   usePresenceNotices(sync.presence, t)
-  useMessageChime(sync.messages, sync.connected, nickname)
   const [sourcePanel, setSourcePanel] = useState<'torrent' | 'youtube' | null>(null)
   // The torrent the room is playing now, when this browser is the one that
   // opened it: the picker lists it again as a playlist instead of asking.
@@ -341,18 +314,12 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     if (!source || source.kind !== 'torrent' || !source.magnet || source.fileName !== liveRoom.fileName) return null
     return { magnet: source.magnet, filePath: source.filePath }
   }, [sourcePanel, liveRoom.sourceOrigin, liveRoom.fileName, room.id])
-  const [readMark, setReadMark] = useState(() => sync.messages.length)
-  const unread = chatOpen ? 0 : Math.max(0, sync.messages.length - readMark)
   const [sourceError, setSourceError] = useState<string>('')
   const [swapProbes, setSwapProbes] = useState<WorkerProbe[]>([])
   const [copied, setCopied] = useState(false)
   const { shown: copiedShown, morphing: copyMorphing } = useMorphingStep(copied)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const isScreenRoom = liveRoom.sourceKind === 'screen'
-  const isLiveRoom = liveRoom.sourceKind === 'live'
   // A stage room paints a relay broadcast: no player, no timeline, no buffering gate.
-  const isStageRoom = isScreenRoom || isLiveRoom
-  const selfNickname = sync.members.find((member) => member.id === sync.memberId)?.nickname ?? ''
   const [catalogOpen, setCatalogOpen] = useState(false)
   const [transferTo, setTransferTo] = useState<Member | null>(null)
   const transferControls = (member: Member) => {
@@ -388,7 +355,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     setOpeningWait(wait)
     if (wait.secondsLeft === null && !wait.cold) setOpening(false)
   }, [])
-  const openingGate: GateStep = opening && !isStageRoom && mediaStatus === 'ready' ? 'buffering' : null
+  const openingGate: GateStep = opening && mediaStatus === 'ready' ? 'buffering' : null
   const { shown: shownOpening } = useMorphingStep(openingGate)
 
   const swapSource = async (run: () => Promise<void>) => {
@@ -428,11 +395,9 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const chooseYoutube = (session: YoutubeSession) => {
     void swapSource(async () => {
       if (session.summary.live) {
-        try {
-          await startYoutubeLive(room.id, { url: session.url, title: youtubeFileName(session), thumbnail: session.summary.thumbnail }, { memberId: sync.memberId, capability: sync.capability })
-        } finally {
-          session.destroy()
-        }
+        // Ao vivo só tocava pelo relay MoQ, que não existe na versão local.
+        session.destroy()
+        setSourceError('changeFailed')
         return
       }
       let next
@@ -472,33 +437,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       }
     })
   }
-
-  const chooseScreen = () => {
-    if (!screenShareSupported()) { setSourceError('error.screenUnsupported'); return }
-    void requestScreenStream().then((stream) => {
-      stashScreenStream(room.id, stream)
-      return swapSource(async () => {
-        try {
-          await changeRoomSource(room.id, sync.memberId, sync.capability, 'screen')
-        } catch (error) {
-          dropScreenStream(room.id)
-          throw error
-        }
-      })
-    }).catch((error: unknown) => {
-      if (!isScreenShareCancelled(error)) setSourceError('changeFailed')
-    })
-  }
-
-  const chatEntries = useMemo((): ChatEntry[] => [
-    ...sync.messages,
-    ...sync.presence.map((event) => ({
-      author: event.nickname,
-      text: t(event.kind === 'join' ? 'presence.joined' : 'presence.left'),
-      at: event.at,
-      system: true,
-    })),
-  ].sort((left, right) => Date.parse(left.at) - Date.parse(right.at)), [sync.messages, sync.presence, t])
 
   const preparing = mediaStatus === 'uploading' || mediaStatus === 'processing'
   useEffect(() => {
@@ -568,9 +506,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     }
   }, [room.id])
 
-  useEffect(() => {
-    if (chatOpen) setReadMark(sync.messages.length)
-  }, [chatOpen, sync.messages.length])
 
   useEffect(() => subscribeUploadProgress(room.id, setUploadProgress), [room.id, liveRoom.mediaGeneration])
   useEffect(() => {
@@ -584,13 +519,9 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const nextEpisode = useNextEpisode(
     nowPlaying,
     videoRef,
-    sync.isController && !isStageRoom && mediaStatus === 'ready',
+    sync.isController && mediaStatus === 'ready',
     chooseCatalogStream,
   )
-
-  const closeChat = useCallback(() => setChatOpen(false), [])
-  const send = sync.send
-  const sendChat = useCallback((text: string) => send('chat', { text }), [send])
 
   const copyLink = async () => {
     try {
@@ -649,14 +580,14 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     <main className="room-shell room-enter">
       <header className="room-header">
         <LayoutGroup id="jlocal">
-        <div className="room-heading"><span className="room-file">{isScreenRoom ? t('room.screenLabel') : liveRoom.fileName}</span><JlocalStatus status={jlocal} t={t} /></div>
+        <div className="room-heading"><span className="room-file">{liveRoom.fileName}</span><JlocalStatus status={jlocal} t={t} /></div>
         <div className="header-actions">
-          {!isStageRoom && (uploadProgress !== null || swarmStats !== null || mediaStatus === 'ready')
+          {(uploadProgress !== null || swarmStats !== null || mediaStatus === 'ready')
             ? <PipelineChip swarm={swarmStats} progress={uploadProgress} remote={isRemoteProduction(room.id)} videoRef={videoRef} t={t} />
             : null}
           {uploadFailed !== null ? <span className="upload-chip is-error">{t('room.uploadFailed')}</span> : null}
           <StatusPill status={sync.buffering ? 'buffering' : sync.connected ? 'live' : 'connecting'} label={t(sync.buffering ? 'status.buffering' : sync.connected ? 'status.live' : 'status.connecting')} />
-          {sync.isController && !isScreenRoom ? (
+          {sync.isController ? (
             <Button
               className={`sync-toggle ${sync.gatingEnabled ? 'is-on' : ''}`}
               variant="ghost"
@@ -681,7 +612,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               onTorrent={() => setSourcePanel('torrent')}
               onYoutube={() => setSourcePanel('youtube')}
               onFile={() => fileInputRef.current?.click()}
-              onScreen={chooseScreen}
             />
           ) : (
             <Button className="catalog-open" onClick={() => { setCatalogFocus(null); setCatalogOpen(true) }}>
@@ -698,44 +628,13 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
             className={copiedShown ? 'is-confirmed' : ''}
             onClick={copyLink}
           />
-          <IconButton
-            icon={<>
-              <MessageSquare size={16} />
-              {unread > 0 ? <span className="chat-badge">{unread > 9 ? '9+' : unread}</span> : null}
-            </>}
-            label={t('chat.title')}
-            className={`chat-toggle ${chatOpen ? 'is-on' : ''}`}
-            aria-pressed={chatOpen}
-            onClick={() => setChatOpen((open) => !open)}
-          />
           <JlocalDownload status={jlocal} t={t} />
         </div>
         </LayoutGroup>
       </header>
       <div className={`room-layout ${sidePanel !== null ? 'chat-open' : ''}`}>
         <section className="media-column">
-          {isScreenRoom ? (
-            <ScreenStage
-              roomId={room.id}
-              memberId={sync.memberId}
-              nickname={selfNickname}
-              capability={sync.capability}
-              isController={sync.isController}
-              shareOpen={liveRoom.screenShareOpen !== false}
-              screens={liveRoom.screens ?? []}
-              viewers={sync.members.filter((member) => member.id !== sync.memberId).length}
-              t={t}
-            />
-          ) : isLiveRoom && liveRoom.live ? (
-            <LiveStage
-              roomId={room.id}
-              memberId={sync.memberId}
-              capability={sync.capability}
-              broadcast={liveRoom.live.broadcast}
-              title={liveRoom.live.title || liveRoom.fileName}
-              t={t}
-            />
-          ) : (
+          {(
             <Player
               room={liveRoom}
               isController={sync.isController}
@@ -756,7 +655,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               gatedStart={sync.waiting !== null}
               onBuffering={sync.reportBuffering}
               onWait={onWait}
-              onChapters={() => setSidePanel((panel) => panel === 'chapters' ? 'chat' : 'chapters')}
+              onChapters={() => setSidePanel((panel) => panel === 'chapters' ? null : 'chapters')}
               overlay={
                 <>
                   {sync.waiting !== null ? (
@@ -801,7 +700,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
           <ChaptersPanel
             chapters={liveRoom.chapters ?? []}
             open
-            onClose={() => setSidePanel('chat')}
+            onClose={() => setSidePanel(null)}
             onSeek={sync.isController ? (seconds) => {
               const throughPlayer = playerSeekRef.current
               if (throughPlayer) throughPlayer(seconds)
@@ -810,9 +709,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
             videoRef={videoRef}
             t={t}
           />
-        ) : (
-          <Chat open={chatOpen} onClose={closeChat} messages={chatEntries} onSend={sendChat} t={t} />
-        )}
+        ) : null}
       </div>
       <input
         ref={fileInputRef}
@@ -1008,13 +905,12 @@ function MemberChip({ member, isController, holdsFile, canAct, onTransfer, onKic
 }
 
 /** The one entry point for putting something else on, as a MorphingMenu. */
-function MediaSwitch({ onOpen, onCatalog, onTorrent, onYoutube, onFile, onScreen, t }: {
+function MediaSwitch({ onOpen, onCatalog, onTorrent, onYoutube, onFile, t }: {
   onOpen: () => void
   onCatalog: () => void
   onTorrent: () => void
   onYoutube: () => void
   onFile: () => void
-  onScreen: () => void
   t: Translator
 }) {
   const pick = (close: () => void, action: () => void) => () => { close(); action() }
@@ -1041,9 +937,6 @@ function MediaSwitch({ onOpen, onCatalog, onTorrent, onYoutube, onFile, onScreen
           </button>
           <button type="button" onClick={pick(close, onFile)}>
             <Upload size={15} aria-hidden="true" />{t('room.switchFile')}
-          </button>
-          <button type="button" onClick={pick(close, onScreen)}>
-            <MonitorUp size={15} aria-hidden="true" />{t('room.switchScreen')}
           </button>
         </div>
       )}

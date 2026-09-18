@@ -4,30 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RoomPage } from './Room'
 import { ToastProvider } from '../ui/Toast'
 import { changeRoomSource, startUrlUpload } from '../upload'
-import { isScreenShareCancelled, requestScreenStream, stashScreenStream } from '../screenshare'
 
-const screenStream = { getTracks: () => [], getVideoTracks: () => [] } as unknown as MediaStream
-vi.mock('../screenshare', () => ({
-  screenShareSupported: vi.fn().mockReturnValue(true),
-  fetchScreenRelay: vi.fn().mockResolvedValue({
-    url: 'https://relay.test/token', base: 'juntos/abc123/secret', path: 'juntos/abc123/secret/m1.hang', publish: true, open: true,
-  }),
-  publishScreen: vi.fn().mockResolvedValue({ status: { peek: () => 'connected', subscribe: () => () => undefined }, ready: Promise.resolve(), close: vi.fn() }),
-  watchScreen: vi.fn().mockResolvedValue({
-    status: { peek: () => 'offline', subscribe: () => () => undefined }, muted: { set: vi.fn() }, close: vi.fn(),
-  }),
-  setScreenLive: vi.fn().mockResolvedValue(undefined),
-  setScreenShareOpen: vi.fn().mockResolvedValue(undefined),
-  screenPath: (base: string, memberId: string) => `${base}/${memberId}.hang`,
-  loadScreenQuality: vi.fn().mockReturnValue('auto'),
-  saveScreenQuality: vi.fn(),
-  SCREEN_QUALITIES: [{ id: 'auto' }],
-  requestScreenStream: vi.fn(),
-  stashScreenStream: vi.fn(),
-  takeScreenStream: vi.fn().mockReturnValue(null),
-  dropScreenStream: vi.fn(),
-  isScreenShareCancelled: vi.fn().mockReturnValue(false),
-}))
 vi.mock('../upload', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../upload')>()),
   changeRoomSource: vi.fn().mockResolvedValue({
@@ -214,18 +191,6 @@ describe('RoomPage source swap', () => {
     expect(await screen.findByRole('button', { name: /change media|trocar mídia/i })).toBeInTheDocument()
   })
 
-  it('starts with the chat closed on a phone, where it would cover the video', async () => {
-    const matchMedia = window.matchMedia
-    window.matchMedia = ((query: string) => ({ ...matchMedia(query), matches: query.includes('900px') })) as typeof window.matchMedia
-    try {
-      renderRoom()
-      await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-      welcome('m2')
-      expect(await screen.findByRole('button', { name: /^chat$/i })).toHaveAttribute('aria-pressed', 'false')
-    } finally {
-      window.matchMedia = matchMedia
-    }
-  })
 
   it('hides the swap from everyone who is not driving the room', async () => {
     renderRoom()
@@ -236,35 +201,7 @@ describe('RoomPage source swap', () => {
     expect(screen.queryByRole('button', { name: /change media|trocar mídia/i })).not.toBeInTheDocument()
   })
 
-  it('repoints the room at a shared screen without anyone leaving', async () => {
-    vi.mocked(requestScreenStream).mockResolvedValue(screenStream)
-    renderRoom()
-    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-    welcome('m1')
 
-    fireEvent.click(await screen.findByRole('button', { name: /change media|trocar mídia/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /share screen|compartilhar tela/i }))
-
-    await waitFor(() => expect(changeRoomSource).toHaveBeenCalledWith('abc123', 'm1', 'cap-token', 'screen'))
-    expect(requestScreenStream).toHaveBeenCalled()
-    expect(stashScreenStream).toHaveBeenCalledWith('abc123', screenStream)
-  })
-
-  it('leaves the room untouched when the screen picker is dismissed', async () => {
-    const cancelled = new DOMException('denied', 'NotAllowedError')
-    vi.mocked(requestScreenStream).mockRejectedValue(cancelled)
-    vi.mocked(isScreenShareCancelled).mockReturnValue(true)
-    renderRoom()
-    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-    welcome('m1')
-
-    fireEvent.click(await screen.findByRole('button', { name: /change media|trocar mídia/i }))
-    fireEvent.click(await screen.findByRole('button', { name: /share screen|compartilhar tela/i }))
-
-    await waitFor(() => expect(requestScreenStream).toHaveBeenCalled())
-    expect(changeRoomSource).not.toHaveBeenCalled()
-    expect(stashScreenStream).not.toHaveBeenCalled()
-  })
 })
 
 describe('RoomPage retomar o preparo', () => {
@@ -378,14 +315,6 @@ describe('RoomPage header', () => {
     })
   })
 
-  const chat = (author: string, text: string) => act(() => {
-    FakeWebSocket.instances[0].onmessage?.({
-      data: JSON.stringify({
-        type: 'chat',
-        message: { author, text, at: new Date().toISOString() },
-      }),
-    })
-  })
 
   async function joinedRoom(memberId = 'm1') {
     renderRoom()
@@ -413,42 +342,8 @@ describe('RoomPage header', () => {
     expect(copy).toHaveAccessibleName(/copy link|copiar link/i)
   })
 
-  it('counts messages that arrive while the chat is shut', async () => {
-    await joinedRoom()
-    const toggle = screen.getByRole('button', { name: /^chat$/i })
 
-    fireEvent.click(toggle)
-    chat('Ana', 'oi')
-    chat('Ana', 'tudo bem?')
 
-    expect(await screen.findByText('2')).toBeInTheDocument()
-  })
-
-  it('clears the count when the chat is opened', async () => {
-    await joinedRoom()
-    const toggle = screen.getByRole('button', { name: /^chat$/i })
-    fireEvent.click(toggle)
-    chat('Ana', 'oi')
-    await screen.findByText('1')
-
-    fireEvent.click(toggle)
-
-    await waitFor(() => expect(screen.queryByText('1')).not.toBeInTheDocument())
-  })
-
-  it('gives the chat column back to the player when the chat is shut', async () => {
-    const { container } = renderRoom()
-    await waitFor(() => expect(FakeWebSocket.instances).not.toHaveLength(0))
-    welcome('m1')
-    await screen.findByRole('button', { name: /copy link|copiar link/i })
-
-    const layout = container.querySelector('.room-layout')!
-    expect(layout).toHaveClass('chat-open')
-
-    fireEvent.click(screen.getByRole('button', { name: /^chat$/i }))
-
-    expect(layout).not.toHaveClass('chat-open')
-  })
 
   it('presents the synced start as a setting that is already on', async () => {
     await joinedRoom()
