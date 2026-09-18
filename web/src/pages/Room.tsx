@@ -7,7 +7,7 @@ import { ChaptersPanel } from '../player/ChaptersPanel'
 import { StatusPill } from '../components/StatusPill'
 import { CopyErrorReport } from '../components/CopyErrorReport'
 import { UploadAvailability, type OpeningWait } from '../components/UploadAvailability'
-import { Check, Compass, Link2, Replace, Upload } from 'lucide-react'
+import { Compass, Download, HardDriveDownload, Replace, Upload } from 'lucide-react'
 import { YoutubeGlyph } from '../ui/YoutubeGlyph'
 import { useT, type Translator } from '../i18n/useT'
 import { Player, regionHolds } from '../player/Player'
@@ -57,12 +57,13 @@ import {
   resumableSourceFor,
   clearResumableSource,
   ownerTokenFor,
+  torrentJobFor,
 } from '../upload'
 import { expectedPositionMs } from '../player/position'
-import { reportPosition } from '../remoteTorrent'
+import { keepTorrent, reportPosition, torrentKept } from '../remoteTorrent'
+import { forget, libraryEntry, remember } from '../library'
 import type { TorrentStats } from '../torrent'
 
-const COPIED_MS = 1_800
 const PREPARING_POLL_MS = 3_000
 // Often enough that the fleet follows a seek without a wait anyone notices,
 // rare enough that a film playing straight through is nearly silent.
@@ -267,8 +268,6 @@ function ConnectedRoom({ room }: { room: RoomInfo }) {
   }, [sourcePanel, liveRoom.sourceOrigin, liveRoom.fileName, room.id])
   const [sourceError, setSourceError] = useState<string>('')
   const [swapProbes, setSwapProbes] = useState<WorkerProbe[]>([])
-  const [copied, setCopied] = useState(false)
-  const { shown: copiedShown, morphing: copyMorphing } = useMorphingStep(copied)
   const fileInputRef = useRef<HTMLInputElement>(null)
   // A stage room paints a relay broadcast: no player, no timeline, no buffering gate.
   const [catalogOpen, setCatalogOpen] = useState(false)
@@ -431,22 +430,6 @@ function ConnectedRoom({ room }: { room: RoomInfo }) {
     chooseCatalogStream,
   )
 
-  const copyLink = async () => {
-    try {
-      await navigator.clipboard.writeText(`${window.location.origin}/room/${room.id}`)
-    } catch (error) {
-      console.error('copy room link failed', error)
-      return
-    }
-    toast(t('room.copiedToast'))
-    setCopied(true)
-  }
-  useEffect(() => {
-    if (!copied) return
-    const timer = window.setTimeout(() => setCopied(false), COPIED_MS)
-    return () => window.clearTimeout(timer)
-  }, [copied])
-
   if (shownGate !== null) {
     return (
       <RoomGate
@@ -492,16 +475,7 @@ function ConnectedRoom({ room }: { room: RoomInfo }) {
             onYoutube={() => setSourcePanel('youtube')}
             onFile={() => fileInputRef.current?.click()}
           />
-          <IconButton
-            icon={
-              <span className="morph-fade" data-morphing={copyMorphing}>
-                {copiedShown ? <Check size={16} /> : <Link2 size={16} />}
-              </span>
-            }
-            label={t('room.copy')}
-            className={copiedShown ? 'is-confirmed' : ''}
-            onClick={copyLink}
-          />
+          <KeepButton roomId={room.id} fileName={liveRoom.fileName} nowPlaying={nowPlaying} t={t} />
           <JlocalDownload status={jlocal} t={t} />
         </div>
         </LayoutGroup>
@@ -613,6 +587,95 @@ function ConnectedRoom({ room }: { room: RoomInfo }) {
 
 // The film icon marks whose computer the video is on; for the controller, a
 // right-click opens what can be done to that person.
+
+/**
+ * Keeping a title on disk, and giving the space back.
+ *
+ * Watching already puts the bytes on the worker — that is what the sliding
+ * window is for — but the worker takes them back the moment the session cools:
+ * the reaper, the quota eviction and shed_fill all exist to reclaim space.
+ * This asks it not to, which is the whole difference between watching
+ * something and having it.
+ *
+ * The state comes from the worker, not from what this browser wrote down: the
+ * two disagree after a cleared site, a reinstall, or a keep made elsewhere,
+ * and the worker is the one holding the file.
+ */
+function KeepButton({ roomId, fileName, nowPlaying, t }: {
+  roomId: string
+  fileName: string
+  nowPlaying: NowPlaying | null
+  t: Translator
+}) {
+  const { toast } = useToast()
+  const [jobId, setJobId] = useState(() => torrentJobFor(roomId) || libraryEntry(roomId)?.jobId || '')
+  const [kept, setKept] = useState<boolean | null>(null)
+  const [working, setWorking] = useState(false)
+
+  // The job arrives with the preparo, which may still be in flight when the
+  // room paints, so the id is looked for until it turns up.
+  useEffect(() => {
+    if (jobId) return
+    const look = () => {
+      const found = torrentJobFor(roomId) || libraryEntry(roomId)?.jobId || ''
+      if (found) setJobId(found)
+    }
+    const timer = window.setInterval(look, 1_000)
+    return () => window.clearInterval(timer)
+  }, [jobId, roomId])
+
+  useEffect(() => {
+    if (!jobId) return
+    let disposed = false
+    void torrentKept(jobId).then((on) => {
+      if (disposed) return
+      setKept(on)
+      // The worker has the last word: a title it is no longer holding leaves
+      // the library rather than sitting there as a promise it cannot keep.
+      if (!on) forget(roomId)
+    })
+    return () => { disposed = true }
+  }, [jobId, roomId])
+
+  if (!jobId) return null
+
+  const toggle = async () => {
+    const next = !kept
+    setWorking(true)
+    try {
+      await keepTorrent(jobId, next)
+    } catch (error) {
+      console.error('keep failed', error)
+      toast(t('room.keepFailed'))
+      setWorking(false)
+      return
+    }
+    if (next) {
+      remember({
+        roomId, jobId, fileName,
+        title: nowPlaying?.name,
+        poster: nowPlaying?.poster,
+        magnet: resumableSourceFor(roomId)?.magnet,
+        filePath: resumableSourceFor(roomId)?.filePath,
+      })
+    } else {
+      forget(roomId)
+    }
+    setKept(next)
+    setWorking(false)
+    toast(t(next ? 'room.keptToast' : 'room.releasedToast'))
+  }
+
+  return (
+    <IconButton
+      icon={kept ? <HardDriveDownload size={16} /> : <Download size={16} />}
+      label={t(kept ? 'room.keptLabel' : 'room.keepLabel')}
+      className={kept ? 'is-confirmed' : ''}
+      disabled={working || kept === null}
+      onClick={() => { void toggle() }}
+    />
+  )
+}
 
 /** The one entry point for putting something else on, as a MorphingMenu. */
 function MediaSwitch({ onOpen, onCatalog, onTorrent, onYoutube, onFile, t }: {

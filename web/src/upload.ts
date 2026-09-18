@@ -130,6 +130,15 @@ export function torrentStatsFor(roomID: string): TorrentStats | null {
   return torrentSessions.get(roomID)?.stats() ?? null
 }
 
+/** The fleet job serving this room, from the live session or, after a reload,
+ * from what the resume hint kept. Empty when the room is not a torrent. */
+export function torrentJobFor(roomID: string): string {
+  const live = torrentSessions.get(roomID)?.jobId
+  if (live) return live
+  const resumable = resumableSourceFor(roomID)
+  return resumable?.kind === 'torrent' ? resumable.jobId ?? '' : ''
+}
+
 /** Whether this tab still has a transfer running (or freshly failed) for the room. */
 export function uploadActive(roomID: string): boolean {
   const entry = uploads.get(roomID)
@@ -145,6 +154,8 @@ export interface ResumableSource {
   fileName: string
   magnet?: string
   filePath?: string
+  /** The fleet job behind a torrent, so a reload can still address it. */
+  jobId?: string
   url?: string
   size?: number
   savedAt: number
@@ -368,7 +379,10 @@ export function startTorrentUpload(
   releaseExternal(roomID)
   torrentSessions.set(roomID, session)
   if (session.magnet) {
-    saveResumableSource(roomID, { kind: 'torrent', fileName: file.name, magnet: session.magnet, filePath: file.path })
+    saveResumableSource(roomID, {
+      kind: 'torrent', fileName: file.name, magnet: session.magnet,
+      filePath: file.path, jobId: session.jobId,
+    })
   }
   remoteProductions.delete(roomID)
   origins.set(roomID, 'torrent')

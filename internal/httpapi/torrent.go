@@ -218,6 +218,11 @@ func getTorrent(service *worker.Service) gin.HandlerFunc {
 		if job.Error != "" {
 			body["error"] = job.Error
 		}
+		// Only when set: the page reads this back to know whether a title is
+		// being kept for offline, rather than trusting its own localStorage.
+		if job.Keep {
+			body["keep"] = true
+		}
 		if c.Query("only") != "swarm" {
 			if job.Name != "" {
 				body["name"] = job.Name

@@ -122,7 +122,7 @@ describe('RoomPage retomar o preparo', () => {
     setup([{ n: 0, startMs: 0, producedMs: 600_000, growing: false }])
     renderRoom()
 
-    await screen.findByRole('button', { name: /copy link|copiar link/i })
+    await screen.findByRole('button', { name: /change media|trocar mídia/i })
     expect(changeRoomSource).not.toHaveBeenCalled()
     expect(startUrlUpload).not.toHaveBeenCalled()
   })
@@ -138,7 +138,7 @@ describe('RoomPage retomar o preparo', () => {
     setup([{ n: 1, startMs: 500_000, producedMs: 100_000, growing: false }], Date.now())
     renderRoom()
 
-    await screen.findByRole('button', { name: /copy link|copiar link/i })
+    await screen.findByRole('button', { name: /change media|trocar mídia/i })
     expect(changeRoomSource).not.toHaveBeenCalled()
     expect(startUrlUpload).not.toHaveBeenCalled()
   })
@@ -175,7 +175,7 @@ describe('RoomPage header', () => {
 
   async function openRoom() {
     renderRoom()
-    return await screen.findByRole('button', { name: /copy link|copiar link/i })
+    return await screen.findByRole('button', { name: /change media|trocar mídia/i })
   }
 
   it('no longer offers screen sharing next to the source switcher', async () => {
@@ -184,18 +184,6 @@ describe('RoomPage header', () => {
     expect(screen.queryByRole('button', { name: /share screen|compartilhar tela/i })).not.toBeInTheDocument()
   })
 
-  it('confirms a copied link with a toast', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.assign(navigator, { clipboard: { writeText } })
-    const copy = await openRoom()
-
-    fireEvent.click(copy)
-
-    expect(writeText).toHaveBeenCalledWith('http://localhost/room/abc123')
-    expect(await screen.findByText(/link copied|link copiado/i)).toBeInTheDocument()
-    await waitFor(() => expect(copy.querySelector('.lucide-check')).toBeTruthy())
-    expect(copy).toHaveAccessibleName(/copy link|copiar link/i)
-  })
 
 
 
@@ -242,3 +230,98 @@ describe('RoomPage waiting screen', () => {
   }, 10_000)
 })
 
+describe('RoomPage download', () => {
+  const room = {
+    id: 'abc123', fileName: 'movie.mkv', status: 'ready',
+    sourceKind: 'upload', mediaGeneration: 0, controllerId: 'm1',
+    audioTracks: null, subtitleTracks: null, bitmapSubsSkipped: 0,
+    memberCount: 1, expiresAt: '2099-01-01T00:00:00Z',
+  }
+
+  // The button needs a fleet job to address; after a reload that comes from
+  // the resume hint the preparo left behind.
+  const setup = (keep: boolean) => {
+    localStorage.clear()
+    localStorage.setItem('ss.owner.abc123', 'owner-secret')
+    localStorage.setItem('ss.resume.abc123', JSON.stringify({
+      kind: 'torrent', fileName: 'movie.mkv', magnet: 'magnet:?xt=urn:btih:abc',
+      filePath: 'movie.mkv', jobId: 'j1', savedAt: Date.now(),
+    }))
+    const calls: { url: string; body?: string }[] = []
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push({ url: String(url), body: init?.body ? String(init.body) : undefined })
+      if (String(url) === '/api/torrents/j1') {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ jobId: 'j1', state: 'serving', ...(keep ? { keep: true } : {}) }) })
+      }
+      if (String(url).endsWith('/keep')) {
+        return Promise.resolve({ ok: true, status: 204, json: async () => ({}) })
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => room })
+    }))
+    return calls
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('offers the download and asks the worker to hold the file', async () => {
+    const calls = setup(false)
+    renderRoom()
+
+    const button = await screen.findByRole('button', { name: /^(download|baixar)$/i })
+    await waitFor(() => expect(button).not.toBeDisabled())
+    fireEvent.click(button)
+
+    await waitFor(() => expect(calls.some((call) => call.url === '/api/torrents/j1/keep' && call.body === '{"keep":true}')).toBe(true))
+    await screen.findByRole('button', { name: /downloaded|baixado/i })
+    expect(JSON.parse(localStorage.getItem('ss.library')!)).toHaveLength(1)
+  })
+
+  it('reads the kept state off the worker rather than off this browser', async () => {
+    setup(true)
+    renderRoom()
+
+    await screen.findByRole('button', { name: /downloaded|baixado/i })
+  })
+
+  // A library entry for a file the worker no longer holds is a promise the
+  // page cannot keep, so it goes.
+  it('drops a library entry the worker has already let go', async () => {
+    setup(false)
+    localStorage.setItem('ss.library', JSON.stringify([
+      { roomId: 'abc123', jobId: 'j1', fileName: 'movie.mkv', savedAt: Date.now() },
+    ]))
+    renderRoom()
+
+    await screen.findByRole('button', { name: /^(download|baixar)$/i })
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('ss.library')!)).toHaveLength(0))
+  })
+
+  it('gives the space back when the download is undone', async () => {
+    const calls = setup(true)
+    localStorage.setItem('ss.library', JSON.stringify([
+      { roomId: 'abc123', jobId: 'j1', fileName: 'movie.mkv', savedAt: Date.now() },
+    ]))
+    renderRoom()
+
+    const button = await screen.findByRole('button', { name: /downloaded|baixado/i })
+    await waitFor(() => expect(button).not.toBeDisabled())
+    fireEvent.click(button)
+
+    await waitFor(() => expect(calls.some((call) => call.url === '/api/torrents/j1/keep' && call.body === '{"keep":false}')).toBe(true))
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('ss.library')!)).toHaveLength(0))
+  })
+
+  // Without one there is nothing to address, and the header should not carry a
+  // button that cannot do anything.
+  it('shows nothing at all for a room with no fleet job', async () => {
+    setup(false)
+    localStorage.removeItem('ss.resume.abc123')
+    renderRoom()
+
+    await screen.findByRole('button', { name: /change media|trocar mídia/i })
+    expect(screen.queryByRole('button', { name: /^(download|baixar)$/i })).not.toBeInTheDocument()
+  })
+})

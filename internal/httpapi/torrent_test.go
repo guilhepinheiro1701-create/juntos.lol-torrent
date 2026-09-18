@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -124,4 +125,49 @@ func TestKeepRefusesAJobThatIsNotServing(t *testing.T) {
 	stored, err := registry.LoadJob(t.Context(), "j_listed")
 	require.NoError(t, err)
 	require.False(t, stored.Keep)
+}
+
+// The page asks the server whether a title is kept, rather than trusting what
+// its own browser remembers: the two can disagree after a reinstall, a cleared
+// site, or a keep made from another machine.
+func TestGetTorrentReportsWhetherItIsKept(t *testing.T) {
+	_, rdb := newRedis(t)
+	signer, err := worker.LoadOrCreateSigner("")
+	require.NoError(t, err)
+	registry := worker.NewRegistry(rdb)
+	service := &worker.Service{Registry: registry, Hub: worker.NewHub(registry, signer, "secret"), Signer: signer, Blocklist: &worker.Blocklist{}}
+	sessions := NewSessions(rdb, 1e9, 0, false)
+	r := gin.New()
+	RegisterTorrentRoutes(r.Group("/api"), config.Config{}, TorrentAccess{Sessions: sessions, Service: service})
+
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/torrents/j_missing", nil))
+	cookies := w.Result().Cookies()
+	require.NotEmpty(t, cookies)
+	sid := cookies[0].Value
+
+	read := func(jobID string) map[string]any {
+		req := httptest.NewRequest(http.MethodGet, "/api/torrents/"+jobID, nil)
+		req.AddCookie(cookies[0])
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		return body
+	}
+
+	require.NoError(t, registry.SaveJob(t.Context(), &worker.JobRecord{
+		ID: "j_plain", SessionID: sid, Infohash: strings.Repeat("a", 40),
+		WorkerID: "w1", State: worker.JobServing,
+	}, time.Minute))
+	require.NoError(t, registry.SaveJob(t.Context(), &worker.JobRecord{
+		ID: "j_kept", SessionID: sid, Infohash: strings.Repeat("b", 40),
+		WorkerID: "w1", State: worker.JobServing, Keep: true,
+	}, time.Minute))
+
+	// Absent rather than false, so a page that does not know about keeping
+	// reads nothing new.
+	require.NotContains(t, read("j_plain"), "keep")
+	require.Equal(t, true, read("j_kept")["keep"])
 }

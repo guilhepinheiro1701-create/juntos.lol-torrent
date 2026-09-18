@@ -141,6 +141,17 @@ function classify(status: number, code: string, reason: string): Error {
  * despejo por cota e o shed_fill existem justamente para retomar espaço. O
  * `keep` isenta o torrent das três.
  */
+export async function torrentKept(jobId: string): Promise<boolean> {
+  try {
+    const job = await api<{ keep?: boolean }>(`/${encodeURIComponent(jobId)}`)
+    return job.keep === true
+  } catch {
+    // A job the session no longer reaches is not being kept for us, whatever
+    // this browser wrote down when it asked.
+    return false
+  }
+}
+
 export async function keepTorrent(jobId: string, keep: boolean): Promise<void> {
   await api(`/${encodeURIComponent(jobId)}/keep`, {
     method: 'POST',
