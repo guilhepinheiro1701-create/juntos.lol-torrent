@@ -20,7 +20,7 @@ func TestServerServesFrontendRoutesWithoutMaskingAPIs(t *testing.T) {
 
 	cfg := testCfg(t)
 	cfg.WebDir = webDir
-	server := NewServer(cfg, newTestStore(t), nil)
+	server := NewServer(cfg, newTestStore(t))
 
 	for _, test := range []struct {
 		path       string
@@ -58,7 +58,7 @@ func newServerWithWebDir(t *testing.T, webDir string) http.Handler {
 	t.Helper()
 	cfg := testCfg(t)
 	cfg.WebDir = webDir
-	return NewServer(cfg, newTestStore(t), nil)
+	return NewServer(cfg, newTestStore(t))
 }
 
 func TestDocsPathDoesNotFallBackToTheApp(t *testing.T) {

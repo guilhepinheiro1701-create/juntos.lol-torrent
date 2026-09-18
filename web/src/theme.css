@@ -53,9 +53,6 @@ h1, h2, p { margin-top: 0; }
 .join-room-form { display: flex; align-items: stretch; gap: 10px; margin-top: 20px; }
 .join-room-form .text-field { flex: 1 1 auto; min-width: 0; max-width: 268px; font-variant-numeric: tabular-nums; letter-spacing: .02em; }
 .join-room-form .primary-button { flex: 0 0 auto; align-items: center; padding: 13px 22px; border-radius: 14px; }
-.still-there-dialog { width: min(400px, calc(100% - 32px)); text-align: center; }
-.still-there-count { margin: 6px 0 20px; color: var(--text); font-size: 40px; line-height: 1; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
-.still-there-dialog .primary-button { width: 100%; }
 .closed-idle-actions { display: grid; gap: 10px; margin-top: 8px; }
 .closed-idle-actions .secondary-button { text-align: center; }
 .screen-stage { display: block; background: #030407; }

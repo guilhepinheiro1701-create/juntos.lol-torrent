@@ -59,10 +59,14 @@ import {
   ownerTokenFor,
 } from '../upload'
 import { expectedPositionMs } from '../player/position'
+import { reportPosition } from '../remoteTorrent'
 import type { TorrentStats } from '../torrent'
 
 const COPIED_MS = 1_800
 const PREPARING_POLL_MS = 3_000
+// Often enough that the fleet follows a seek without a wait anyone notices,
+// rare enough that a film playing straight through is nearly silent.
+const POSITION_REPORT_MS = 10_000
 // How long a pipeline may go quiet before the room counts as unproduced: long
 // enough to outlast a cold seek, well short of the server's claim sweep.
 const PRODUCER_ALIVE_MS = 90_000
@@ -397,6 +401,19 @@ function ConnectedRoom({ room }: { room: RoomInfo }) {
   useEffect(() => {
     remuxHandleFor(room.id)?.follow(expectedPositionMs(sync.state, Date.now()))
   }, [room.id, sync.state])
+
+  // The socket used to tell the server where playback was, which is how the
+  // fleet knew to produce from a seek it had not reached yet, and how the
+  // server knew the room was still being watched. Both now ride on this, on a
+  // timer: a report per seek would be noise, and the server debounces anyway.
+  const positionRef = useRef(sync.state)
+  positionRef.current = sync.state
+  useEffect(() => {
+    const tell = () => { void reportPosition(room.id, expectedPositionMs(positionRef.current, Date.now())) }
+    tell()
+    const timer = window.setInterval(tell, POSITION_REPORT_MS)
+    return () => { window.clearInterval(timer); tell() }
+  }, [room.id])
 
   useEffect(() => subscribeUploadProgress(room.id, setUploadProgress), [room.id, liveRoom.mediaGeneration])
   useEffect(() => {

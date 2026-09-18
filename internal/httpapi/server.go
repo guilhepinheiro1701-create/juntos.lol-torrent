@@ -11,7 +11,6 @@ import (
 
 	"github.com/giulianoo0/ss/internal/config"
 	"github.com/giulianoo0/ss/internal/room"
-	syncapi "github.com/giulianoo0/ss/internal/sync"
 )
 
 type ServerOption func(*serverOptions)
@@ -25,6 +24,13 @@ type serverOptions struct {
 	workerLink        gin.HandlerFunc
 	pluginSessions    *Sessions
 	pluginQuota       *Quota
+	positionHooks     PositionHooks
+}
+
+// WithPosition receives the viewer's playback position: what production should
+// follow, and the sign that the room is still being watched.
+func WithPosition(hooks PositionHooks) ServerOption {
+	return func(o *serverOptions) { o.positionHooks = hooks }
 }
 
 // WithPluginFetch puts a session and an hourly budget on the plugin hop.
@@ -61,7 +67,7 @@ func WithClientMedia(bucket ClientMediaBucket, hooks ClientMediaHooks) ServerOpt
 	}
 }
 
-func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...ServerOption) *gin.Engine {
+func NewServer(cfg config.Config, store *room.Store, opts ...ServerOption) *gin.Engine {
 	var options serverOptions
 	for _, apply := range opts {
 		apply(&options)
@@ -78,34 +84,14 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	waiter := newPlaylistWaiter()
 	RegisterMediaRoutes(r, store, waiter)
 	options.clientMediaHooks.NotifyPlaylists = waiter.Notify
-	if hub != nil && options.clientMediaHooks.NotifyRoomMedia == nil {
-		options.clientMediaHooks.NotifyRoomMedia = hub.NotifyRoomMedia
-	}
-	var onSubsStored func(string)
-	if hub != nil {
-		onSubsStored = hub.NotifyRoomUpdated
-	}
-	RegisterSubtitlesRoute(r.Group("/api"), store, cfg, options.subtitlePublisher, onSubsStored)
-	var authorizer memberAuthorizer
-	if hub != nil {
-		authorizer = hub
-	}
-	RegisterSourceRoute(r.Group("/api"), store, cfg, authorizer, options.sourceHooks)
+	// The room no longer pushes anything: the page polls for what it needs, so
+	// there is nobody left to notify that subtitles landed.
+	RegisterSubtitlesRoute(r.Group("/api"), store, cfg, options.subtitlePublisher, nil)
+	RegisterSourceRoute(r.Group("/api"), store, cfg, nil, options.sourceHooks)
+	RegisterPositionRoute(r.Group("/api"), store, nil, options.positionHooks)
 	RegisterClientMediaRoutes(r.Group("/api"), store, cfg, options.clientMediaBucket, options.clientMediaHooks)
 	RegisterTorrentRoutes(r.Group("/api"), cfg, options.torrentAccess)
 	RegisterYoutubeRoutes(r.Group("/api"), cfg, options.torrentAccess)
-	if hub != nil {
-		r.GET("/ws/rooms/:id", hub.HandleWS)
-		r.GET("/api/live", func(c *gin.Context) {
-			_, members := hub.Live()
-			census, err := store.Census(c.Request.Context())
-			if err != nil {
-				c.JSON(http.StatusOK, gin.H{"members": members})
-				return
-			}
-			c.JSON(http.StatusOK, gin.H{"rooms": census.Total, "members": members})
-		})
-	}
 	if options.workerLink != nil {
 		r.GET("/ws/worker-link", options.workerLink)
 	}

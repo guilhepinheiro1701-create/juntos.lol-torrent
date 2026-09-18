@@ -14,10 +14,10 @@ import (
 
 	"github.com/giulianoo0/ss/internal/config"
 	"github.com/giulianoo0/ss/internal/httpapi"
+	"github.com/giulianoo0/ss/internal/janitor"
 	"github.com/giulianoo0/ss/internal/media"
 	"github.com/giulianoo0/ss/internal/objectstore"
 	"github.com/giulianoo0/ss/internal/room"
-	syncapi "github.com/giulianoo0/ss/internal/sync"
 	"github.com/giulianoo0/ss/internal/worker"
 )
 
@@ -50,8 +50,8 @@ func main() {
 	ctx := context.Background()
 	go room.StartSweeper(ctx, store, cfg.DataDir, bucket, time.Minute,
 		time.Duration(cfg.UploadIdleMinutes)*time.Minute)
-	hub := syncapi.NewHub(store, cfg, bucket)
-	defer hub.Close()
+	keeper := janitor.New(store, cfg, bucket)
+	go keeper.Run(ctx)
 
 	signer, err := worker.LoadOrCreateSigner(cfg.WorkerSigningKeyFile)
 	if err != nil {
@@ -92,15 +92,12 @@ func main() {
 		}); err != nil {
 			return
 		}
-		hub.NotifyRoomUpdated(roomID)
 	}
 	remuxOrch := worker.NewRemuxOrchestrator(torrents, store, cfg)
-	remuxOrch.Notify = hub.NotifyRoomUpdated
-	hub.OnRoomReclaimed(func(roomID string) {
+	keeper.OnReclaimed = func(roomID string) {
 		remuxOrch.CancelRoom(roomID)
 		torrents.CancelRoom(roomID)
-	})
-	hub.OnPosition(remuxOrch.Follow)
+	}
 	workerHub.OnHeartbeat(func(workerID string, hb worker.Heartbeat) {
 		torrents.Charge(workerID, hb)
 		torrents.ObserveLives(workerID, hb)
@@ -109,20 +106,16 @@ func main() {
 	go torrents.StartSweeper(ctx, time.Minute, time.Duration(cfg.UploadIdleMinutes)*time.Minute)
 	sessions := httpapi.NewSessions(rdb, time.Duration(cfg.SessionTTLDays)*24*time.Hour, cfg.SessionsPerIPPerHour, cfg.BehindCloudflare)
 
-	r := httpapi.NewServer(cfg, store, hub,
+	r := httpapi.NewServer(cfg, store,
 		httpapi.WithSubtitlePublisher(publisher),
-		httpapi.WithClientMedia(bucket, httpapi.ClientMediaHooks{
-			NotifyStatus:       hub.NotifyStatus,
-			NotifyRoomUpdated:  hub.NotifyRoomUpdated,
-			NotifyRoomMedia:    hub.NotifyRoomMedia,
-			NotifyRoomProgress: hub.NotifyRoomProgress,
-		}),
-		httpapi.WithSourceHooks(httpapi.SourceHooks{NotifyStatus: hub.NotifyStatus, ResetPlayback: hub.ResetPlayback, CancelMedia: func(roomID string) {
+		httpapi.WithClientMedia(bucket, httpapi.ClientMediaHooks{}),
+		httpapi.WithSourceHooks(httpapi.SourceHooks{CancelMedia: func(roomID string) {
 			remuxOrch.CancelRoom(roomID)
 			torrents.CancelRoom(roomID)
 		}}),
+		httpapi.WithPosition(httpapi.PositionHooks{Follow: remuxOrch.Follow, Seen: keeper.Seen}),
 		httpapi.WithTorrents(httpapi.TorrentAccess{Sessions: sessions, Quota: quota, Service: torrents,
-			Remux: remuxOrch, Authorizer: hub.AuthorizeMember}, workerHub.HandleLink),
+			Remux: remuxOrch}, workerHub.HandleLink),
 		httpapi.WithPluginFetch(sessions, quota),
 	)
 

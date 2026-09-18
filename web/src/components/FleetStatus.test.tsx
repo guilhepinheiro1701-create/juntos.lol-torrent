@@ -152,22 +152,6 @@ describe('FleetStatus', () => {
     expect(container.querySelector('dd.is-pending')?.textContent).toBe('measuring…')
   })
 
-  it('shows how many rooms and people are on right now', async () => {
-    vi.stubGlobal('fetch', vi.fn((url: string) => Promise.resolve({
-      ok: true,
-      json: async () => url === '/api/live'
-        ? { rooms: 3, members: 7 }
-        : { capacity: 'available', workers: [member()] },
-    })))
-    render(<FleetStatus />)
-
-    await waitFor(() => expect(screen.getByText('Rooms open')).toBeInTheDocument())
-    expect(screen.getByText('People watching')).toBeInTheDocument()
-    const counts = document.querySelectorAll('.fleet-live dd')
-    expect(counts[0].textContent).toContain('3')
-    expect(counts[1].textContent).toContain('7')
-  })
-
   it('reports the disk a worker is really holding, not what it reserved', async () => {
     answer({ capacity: 'available', workers: [member({ diskUsed: 10_737_418_240, diskReal: 343_932_928 })] })
     render(<FleetStatus />)

@@ -1,10 +1,8 @@
 import { useEffect, useState } from 'react'
-import NumberFlow from '@number-flow/react'
-import { fleetStatus, liveNow, probeWorkers, type Fleet, type FleetMember, type Live, type WorkerProbe } from '../remoteTorrent'
+import { fleetStatus, probeWorkers, type Fleet, type FleetMember, type WorkerProbe } from '../remoteTorrent'
 import { useT } from '../i18n/useT'
 
 const REFRESH_MS = 10_000
-const LIVE_REFRESH_MS = 3_000
 
 function gib(bytes: number): string {
   return `${(bytes / 1_073_741_824).toFixed(1)} GB`
@@ -26,7 +24,6 @@ export function FleetStatus() {
   const [failed, setFailed] = useState(false)
   const [probes, setProbes] = useState<WorkerProbe[]>([])
   const [probing, setProbing] = useState(true)
-  const [live, setLive] = useState<Live | null>(null)
 
   useEffect(() => {
     let disposed = false
@@ -42,19 +39,6 @@ export function FleetStatus() {
     }
     void read()
     const timer = window.setInterval(read, REFRESH_MS)
-    return () => { disposed = true; window.clearInterval(timer) }
-  }, [])
-
-  useEffect(() => {
-    let disposed = false
-    const read = async () => {
-      try {
-        const next = await liveNow()
-        if (!disposed) setLive(next)
-      } catch {}
-    }
-    void read()
-    const timer = window.setInterval(read, LIVE_REFRESH_MS)
     return () => { disposed = true; window.clearInterval(timer) }
   }, [])
 
@@ -97,18 +81,6 @@ export function FleetStatus() {
               ? t('fleet.none')
               : t('fleet.summary').replace('{available}', String(available)).replace('{total}', String(fleet.workers.length))}
         </p>
-        {live ? (
-          <dl className="fleet-live">
-            <div>
-              <dt>{t('fleet.liveRooms')}</dt>
-              <dd><NumberFlow value={live.rooms} /></dd>
-            </div>
-            <div>
-              <dt>{t('fleet.liveMembers')}</dt>
-              <dd><NumberFlow value={live.members} /></dd>
-            </div>
-          </dl>
-        ) : null}
         {failed ? <p className="fleet-stale">{t('fleet.stale')}</p> : null}
       </header>
 

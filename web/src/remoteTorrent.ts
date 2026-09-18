@@ -6,6 +6,7 @@
  * are. Reads then go straight to the worker over HTTPS Range; the server
  * is never in the byte path.
  */
+import { ownerTokenFor } from './upload'
 import { isSubtitleFileName } from './subtitleFormats'
 import type { TorrentSession, TorrentSideFile, TorrentStats, TorrentVideoFile, WorkerGrant } from './torrent'
 
@@ -185,20 +186,6 @@ export interface Fleet {
 }
 
 /** Rooms with someone in them right now. */
-export interface Live {
-  rooms: number
-  members: number
-}
-
-// Counted from the live WebSocket connections, not from stored rooms: a room
-// key outlives the tab that made it by the whole room TTL.
-export async function liveNow(): Promise<Live> {
-  const response = await fetch('/api/live')
-  if (!response.ok) throw new Error(`live ${response.status}`)
-  const body = await response.json() as Partial<Live>
-  return { rooms: body.rooms ?? 0, members: body.members ?? 0 }
-}
-
 export async function fleetStatus(): Promise<Fleet> {
   const response = await fetch('/api/fleet')
   if (!response.ok) throw new Error(`fleet ${response.status}`)
@@ -435,4 +422,24 @@ export async function openRemoteTorrent(
       if (statsTimer !== null) clearInterval(statsTimer)
     },
   }
+}
+
+/**
+ * Tells the server where playback is. It is two things at once: what the
+ * fleet's production follows when a seek runs past what it has made, and the
+ * sign that the room is still being watched — the room socket used to carry
+ * both, and nothing else does now. A refusal is not worth surfacing: it costs
+ * the viewer nothing that they can act on, and the next report retries.
+ */
+export async function reportPosition(roomId: string, positionMs: number): Promise<void> {
+  const ownerToken = ownerTokenFor(roomId)
+  if (!ownerToken) return
+  try {
+    await fetch(`/api/rooms/${encodeURIComponent(roomId)}/position`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ownerToken, positionMs: Math.max(0, Math.round(positionMs)) }),
+      keepalive: true,
+    })
+  } catch {}
 }
