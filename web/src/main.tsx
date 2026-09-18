@@ -1,5 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import './tailwind.css'
 import './theme.css'
 import App from './App.tsx'
 import { ToastProvider } from './ui/Toast'

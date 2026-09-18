@@ -1,5 +1,9 @@
 {
   "files": [],
+  // O CLI do shadcn lê o tsconfig raiz para resolver o alias '@'.
+  "compilerOptions": {
+    "paths": { "@/*": ["./src/*"] }
+  },
   "references": [
     { "path": "./tsconfig.app.json" },
     { "path": "./tsconfig.node.json" }

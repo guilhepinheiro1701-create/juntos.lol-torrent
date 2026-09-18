@@ -1,9 +1,15 @@
 import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+import { fileURLToPath, URL } from 'node:url'
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
+  // shadcn e os registries (MagicUI, SmoothUI) geram imports com '@/'.
+  resolve: {
+    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+  },
   worker: {
     // The plugin worker dynamically imports the plugin's module, which a
     // classic worker cannot do; Vite's build default is 'iife'.

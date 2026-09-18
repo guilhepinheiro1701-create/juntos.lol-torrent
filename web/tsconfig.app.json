@@ -1,5 +1,8 @@
 {
   "compilerOptions": {
+    /* shadcn e os registries geram imports com '@/' */
+    "paths": { "@/*": ["./src/*"] },
+
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
     "target": "es2023",
     "lib": ["ES2023", "DOM"],
