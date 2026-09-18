@@ -141,14 +141,23 @@ function classify(status: number, code: string, reason: string): Error {
  * despejo por cota e o shed_fill existem justamente para retomar espaço. O
  * `keep` isenta o torrent das três.
  */
-export async function torrentKept(jobId: string): Promise<boolean> {
+/**
+ * Whether the worker is holding this download.
+ *
+ * Three answers, not two, because "no" and "could not ask" are different
+ * things and treating them alike throws away a film. A job belongs to a
+ * browser session; when that session lapses the job stops being addressable
+ * while the bytes are still on the worker's disk, and a page that read that
+ * as "released" would drop the library entry pointing at them.
+ */
+export type KeptState = 'kept' | 'released' | 'unknown'
+
+export async function torrentKept(jobId: string): Promise<KeptState> {
   try {
     const job = await api<{ keep?: boolean }>(`/${encodeURIComponent(jobId)}`)
-    return job.keep === true
+    return job.keep === true ? 'kept' : 'released'
   } catch {
-    // A job the session no longer reaches is not being kept for us, whatever
-    // this browser wrote down when it asked.
-    return false
+    return 'unknown'
   }
 }
 

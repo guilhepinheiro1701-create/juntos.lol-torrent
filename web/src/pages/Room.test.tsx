@@ -314,6 +314,30 @@ describe('RoomPage download', () => {
     await waitFor(() => expect(JSON.parse(localStorage.getItem('ss.library')!)).toHaveLength(0))
   })
 
+  // A job the session can no longer address is not a job the worker has let
+  // go: the bytes are still on its disk, and dropping the record would lose
+  // the only pointer to them.
+  it('keeps the library entry when it cannot ask the worker', async () => {
+    setup(false)
+    localStorage.setItem('ss.library', JSON.stringify([
+      { roomId: 'abc123', jobId: 'j1', fileName: 'movie.mkv', savedAt: Date.now() },
+    ]))
+    vi.stubGlobal('fetch', vi.fn((url: string) => (
+      String(url) === '/api/torrents/j1'
+        ? Promise.resolve({ ok: false, status: 403, json: async () => ({ error: 'not_yours' }) })
+        : Promise.resolve({ ok: true, status: 200, json: async () => room })
+    )))
+    renderRoom()
+
+    await screen.findByRole('button', { name: /change media|trocar mídia/i })
+    // The button cannot act on a job it cannot reach, so it stays out of the way.
+    await waitFor(() => {
+      const button = screen.queryByRole('button', { name: /^(download|baixar|downloaded|baixado)$/i })
+      expect(button === null || button.hasAttribute('disabled')).toBe(true)
+    })
+    expect(JSON.parse(localStorage.getItem('ss.library')!)).toHaveLength(1)
+  })
+
   // Without one there is nothing to address, and the header should not carry a
   // button that cannot do anything.
   it('shows nothing at all for a room with no fleet job', async () => {

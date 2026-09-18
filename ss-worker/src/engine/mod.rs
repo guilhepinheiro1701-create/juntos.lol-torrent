@@ -3,6 +3,7 @@ mod disk;
 mod entry;
 mod fill;
 mod floors;
+mod kept;
 mod reaper;
 mod slots;
 mod window;
@@ -56,6 +57,10 @@ const TRACKER_INTERVAL: Duration = Duration::from_secs(30);
 pub struct Engine {
     session: Arc<Session>,
     torrents: Mutex<HashMap<String, Entry>>,
+    /// O que foi guardado para assistir offline, no disco e não só aqui: um
+    /// torrent marcado volta marcado depois de um restart, e a varredura de
+    /// subida poupa a pasta dele.
+    kept: kept::Kept,
     disk: DiskAccountant,
     pub cfg: WorkerConfig,
     draining: AtomicBool,
@@ -267,16 +272,13 @@ fn punch_works(dir: &std::path::Path) -> bool {
 impl Engine {
     pub async fn new(cfg: WorkerConfig) -> anyhow::Result<Arc<Self>> {
         let dir = cfg.data_dir.join("torrents");
-        if dir.exists() {
-            match std::fs::remove_dir_all(&dir) {
-                Ok(()) => {
-                    tracing::info!(dir = %dir.display(), "cleared torrent data left by the previous run")
-                }
-                Err(e) => {
-                    tracing::warn!(dir = %dir.display(), error = %e, "could not clear leftover torrent data")
-                }
-            }
-        }
+        // A varredura antiga apagava esta pasta inteira, o que fazia de
+        // "baixar para assistir offline" uma verdade que durava até o próximo
+        // restart. Agora o que alguém pediu para ficar, fica.
+        std::fs::create_dir_all(&cfg.data_dir)?;
+        let kept = kept::Kept::load(&cfg.data_dir);
+        kept::sweep_leftovers(&dir, &kept.folders());
+        kept.prune_missing();
         std::fs::create_dir_all(&dir)?;
         let mut opts = SessionOptions {
             fastresume: true,
@@ -309,6 +311,7 @@ impl Engine {
         let engine = Arc::new(Self {
             session,
             torrents: Mutex::new(HashMap::new()),
+            kept,
             disk: DiskAccountant::new(cfg.disk_quota_bytes, cfg.high_water_bytes(), dir.clone()),
             transients: Arc::new(tokio::sync::Semaphore::new(cfg.max_leases * 2)),
             cfg,
@@ -386,7 +389,7 @@ impl Engine {
                         let mut map = self.torrents.lock();
                         let entry = map
                             .entry(infohash.clone())
-                            .or_insert_with(|| Entry::new(handle.clone(), Phase::Ready, 0));
+                            .or_insert_with(|| self.fresh_entry(&infohash, handle.clone()));
                         entry.take_lease(lease_id);
                     }
                     return admission::lease_info(&handle).map_err(Rejection::Internal);
@@ -425,9 +428,18 @@ impl Engine {
         let mut map = self.torrents.lock();
         let entry = map
             .entry(infohash.clone())
-            .or_insert_with(|| Entry::new(handle.clone(), Phase::Ready, 0));
+            .or_insert_with(|| self.fresh_entry(&infohash, handle.clone()));
         entry.take_lease(lease_id);
         Ok(info)
+    }
+
+    /// Uma entrada nova já nasce marcada se o registro diz que este torrent foi
+    /// guardado: é isso que faz o download offline continuar sendo um download
+    /// offline depois de o worker reiniciar e o torrent ser readicionado.
+    fn fresh_entry(&self, infohash: &str, handle: Handle) -> Entry {
+        let mut entry = Entry::new(handle, Phase::Ready, 0);
+        entry.keep = self.kept.contains(infohash);
+        entry
     }
 
     fn attach_existing(&self, infohash: &str, lease_id: &str) -> Option<Handle> {
@@ -913,6 +925,15 @@ impl Engine {
             return known;
         }
         let Some(handle) = self.handle(&infohash) else { return true };
+        // O registro entra aqui, antes de mexer no fill: se o processo cair no
+        // meio, a pasta já está poupada da varredura, e o pior caso é um
+        // torrent guardado que ainda não terminou de baixar. O contrário
+        // apagaria um download que o espectador acha que tem.
+        if on {
+            self.kept.mark(&infohash, handle.output_folder().to_path_buf());
+        } else {
+            self.kept.clear(&infohash);
+        }
         let (full, footprint) = {
             let guard = handle.metadata.load();
             let Some(meta) = guard.as_ref() else { return true };

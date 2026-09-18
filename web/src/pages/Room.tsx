@@ -627,12 +627,15 @@ function KeepButton({ roomId, fileName, nowPlaying, t }: {
   useEffect(() => {
     if (!jobId) return
     let disposed = false
-    void torrentKept(jobId).then((on) => {
+    void torrentKept(jobId).then((state) => {
       if (disposed) return
-      setKept(on)
-      // The worker has the last word: a title it is no longer holding leaves
-      // the library rather than sitting there as a promise it cannot keep.
-      if (!on) forget(roomId)
+      // Only a straight answer moves anything. "released" means the worker
+      // has let the file go, so the library entry pointing at it is a promise
+      // nobody can keep; "unknown" means we could not ask, which is what a
+      // lapsed session looks like, and the bytes may well still be there.
+      if (state === 'unknown') return
+      setKept(state === 'kept')
+      if (state === 'released') forget(roomId)
     })
     return () => { disposed = true }
   }, [jobId, roomId])
