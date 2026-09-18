@@ -132,6 +132,21 @@ function classify(status: number, code: string, reason: string): Error {
   return new Error(`torrent api ${code || status}`)
 }
 
+/**
+ * Marca este download para ficar no disco depois da sessão — o modo offline —
+ * ou devolve o espaço.
+ *
+ * Sem isso, o worker apaga o arquivo assim que a sessão esfria: o reaper, o
+ * despejo por cota e o shed_fill existem justamente para retomar espaço. O
+ * `keep` isenta o torrent das três.
+ */
+export async function keepTorrent(jobId: string, keep: boolean): Promise<void> {
+  await api(`/${encodeURIComponent(jobId)}/keep`, {
+    method: 'POST',
+    body: JSON.stringify({ keep }),
+  })
+}
+
 /** available, busy, no_workers or disabled. */
 export async function torrentCapacity(): Promise<string> {
   try {

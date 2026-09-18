@@ -66,6 +66,7 @@ func RegisterTorrentRoutes(rg *gin.RouterGroup, cfg config.Config, access Torren
 	group.GET("/:jobId", getTorrent(access.Service))
 	group.POST("/:jobId/select", selectTorrent(access.Service, cfg))
 	group.POST("/:jobId/token", tokenTorrent(access.Service))
+	group.POST("/:jobId/keep", keepTorrent(access.Service))
 	group.POST("/:jobId/remux", startRemux(access))
 	group.DELETE("/:jobId", releaseTorrent(access.Service))
 }
@@ -267,6 +268,27 @@ func selectTorrent(service *worker.Service, cfg config.Config) gin.HandlerFunc {
 			return
 		}
 		c.JSON(http.StatusOK, grant)
+	}
+}
+
+type keepRequest struct {
+	Keep bool `json:"keep"`
+}
+
+// keepTorrent turns the offline copy on or off for one download.
+func keepTorrent(service *worker.Service) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req keepRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+		if err := service.Keep(c.Request.Context(), SessionID(c), c.Param("jobId"), req.Keep); err != nil {
+			status, code := torrentErrorStatus(err)
+			c.JSON(status, gin.H{"error": code})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"keep": req.Keep})
 	}
 }
 

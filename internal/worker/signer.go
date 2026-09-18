@@ -70,6 +70,7 @@ type Job struct {
 	LeaseID   string      `json:"leaseId,omitempty"`
 	Trackers  []string    `json:"trackers,omitempty"`
 	JTI       string      `json:"jti,omitempty"`
+	Keep      *bool       `json:"keep,omitempty"`
 	Remux     any         `json:"remux,omitempty"`
 	Youtube   *YoutubeJob `json:"youtube,omitempty"`
 	Live      *LiveJob    `json:"live,omitempty"`

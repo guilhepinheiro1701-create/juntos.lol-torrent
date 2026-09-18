@@ -281,6 +281,9 @@ type JobRecord struct {
 	Files      []FileEntry     `json:"files,omitempty"`
 	FileIndex  *int            `json:"fileIndex,omitempty"`
 	Audience   string          `json:"audience,omitempty"`
+	// Keep marks a download the viewer asked to keep on disk for offline
+	// watching; the worker exempts it from every routine that reclaims space.
+	Keep       bool            `json:"keep,omitempty"`
 	CreatedAt  time.Time       `json:"createdAt"`
 	LastSeenAt time.Time       `json:"lastSeenAt"`
 	HaveBytes  int64           `json:"haveBytes"`

@@ -398,6 +398,38 @@ type Grant struct {
 	FileIndex int       `json:"fileIndex"`
 }
 
+// Keep marks a torrent to survive on disk after the session, so it can be
+// watched offline — or unmarks it. The worker's reaper, quota eviction and
+// fill shedding all skip a kept torrent, which is what makes it permanent;
+// unkeeping hands the space back to those same routines.
+func (s *Service) Keep(ctx context.Context, sessionID, jobID string, keep bool) error {
+	job, err := s.Get(ctx, sessionID, jobID)
+	if err != nil {
+		return err
+	}
+	// Only a torrent the worker already holds can be kept: before the file is
+	// chosen there is nothing on disk to keep.
+	if job.State != JobServing && job.State != JobSelecting {
+		return ErrNotListed
+	}
+	result, err := s.Hub.Dispatch(ctx, Job{
+		Kind:     "keep",
+		JobID:    "k_" + randomID(6),
+		WorkerID: job.WorkerID,
+		Infohash: job.Infohash,
+		Keep:     &keep,
+	}, 30*time.Second)
+	if err != nil {
+		return &WorkerError{Code: mapDispatchError(err), Detail: err.Error()}
+	}
+	if !result.OK {
+		return &WorkerError{Code: result.Error, Detail: result.Detail}
+	}
+	job.Keep, job.LastSeenAt = keep, time.Now()
+	_ = s.Registry.SaveJob(ctx, job, s.JobTTL)
+	return nil
+}
+
 // Select makes the worker download one file and mints the first ticket.
 func (s *Service) Select(ctx context.Context, sessionID, jobID string, fileIndex int, roomID, audience string) (*Grant, error) {
 	job, err := s.Get(ctx, sessionID, jobID)
