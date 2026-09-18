@@ -79,26 +79,26 @@ describe('keepTorrent, o modo offline', () => {
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
   it('pede ao servidor para guardar o download deste job', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ keep: true })))
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({ keep: true })))
     vi.stubGlobal('fetch', fetchMock)
 
     await keepTorrent('job 1/2', true)
 
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    const [url, init] = fetchMock.mock.calls[0]!
     // O id vai codificado: um jobId com barra não pode virar outra rota.
     expect(url).toBe('/api/torrents/job%201%2F2/keep')
-    expect(init.method).toBe('POST')
-    expect(JSON.parse(String(init.body))).toEqual({ keep: true })
+    expect(init!.method).toBe('POST')
+    expect(JSON.parse(String(init!.body))).toEqual({ keep: true })
   })
 
   it('usa o mesmo caminho para devolver o espaço', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ keep: false })))
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({ keep: false })))
     vi.stubGlobal('fetch', fetchMock)
 
     await keepTorrent('j1', false)
 
-    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect(JSON.parse(String(init.body))).toEqual({ keep: false })
+    const [, init] = fetchMock.mock.calls[0]!
+    expect(JSON.parse(String(init!.body))).toEqual({ keep: false })
   })
 
   it('propaga a recusa do servidor em vez de fingir que guardou', async () => {

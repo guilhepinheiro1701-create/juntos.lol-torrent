@@ -9,7 +9,7 @@ import { CopyErrorReport } from '../components/CopyErrorReport'
 import { StillThere } from '../components/StillThere'
 import { caretToEndOnFocus } from '../ui/caret'
 import { UploadAvailability, type OpeningWait } from '../components/UploadAvailability'
-import { Check, Compass, Crown, FileVideo, Link2, Replace, Upload, UserX, X } from 'lucide-react'
+import { Check, Compass, Link2, Replace, Upload } from 'lucide-react'
 import { YoutubeGlyph } from '../ui/YoutubeGlyph'
 import { useT, type Translator } from '../i18n/useT'
 import { Player, regionHolds } from '../player/Player'
@@ -21,8 +21,7 @@ import { MorphingMenu } from '../ui/MorphingMenu'
 import { useMorphingStep } from '../ui/useMorphingStep'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import { useToast } from '../ui/toastContext'
-import { playJoinChime } from '../ui/chime'
-import type { Member, PresenceEvent, RoomInfo, RoomWaiting, TitleRequest } from '../types'
+import type { RoomInfo } from '../types'
 import type { OverlayFocus } from '../catalog/CatalogOverlay'
 const CatalogOverlay = lazy(() => import('../catalog/CatalogOverlay').then((module) => ({ default: module.CatalogOverlay })))
 import { openCatalogStream } from '../catalog/openStream'
@@ -304,7 +303,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const [uploadProgress, setUploadProgress] = useState<RoomUploadProgress | null>(null)
   const [uploadFailed, setUploadFailed] = useState<string | null>(null)
   const mediaStatus = sync.roomStatus === 'ready' || sync.roomStatus === 'error' ? sync.roomStatus : liveRoom.status
-  usePresenceNotices(sync.presence, t)
   const [sourcePanel, setSourcePanel] = useState<'torrent' | 'youtube' | null>(null)
   // The torrent the room is playing now, when this browser is the one that
   // opened it: the picker lists it again as a playlist instead of asking.
@@ -321,11 +319,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const fileInputRef = useRef<HTMLInputElement>(null)
   // A stage room paints a relay broadcast: no player, no timeline, no buffering gate.
   const [catalogOpen, setCatalogOpen] = useState(false)
-  const [transferTo, setTransferTo] = useState<Member | null>(null)
-  const transferControls = (member: Member) => {
-    if (liveRoom.sourceOrigin === 'file' && liveRoom.sourceMemberId === sync.memberId) setTransferTo(member)
-    else sync.send('transfer', { targetId: member.id })
-  }
   useEffect(() => {
     if (!sync.memberId || !sync.connected) return
     const origin = sourceOriginFor(room.id)
@@ -333,7 +326,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     sync.send('source', { origin })
   }, [room.id, sync.memberId, sync.connected, sync.send, liveRoom.mediaGeneration])
   const [catalogFocus, setCatalogFocus] = useState<OverlayFocus | null>(null)
-  const [dismissedRequests, setDismissedRequests] = useState<number[]>([])
   const [nowPlaying, setNowPlaying] = useState<NowPlaying | null>(() => {
     try {
       return JSON.parse(localStorage.getItem(nowPlayingKey(room.id)) ?? 'null') as NowPlaying | null
@@ -553,17 +545,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     )
   }
 
-  const visibleRequests = sync.titleRequests.filter((request) => !dismissedRequests.includes(request.id)).slice(-3)
-
-  const openRequestedTitle = (request: TitleRequest) => {
-    setCatalogFocus({
-      open: { meta: { id: request.metaId, type: request.metaType, name: request.name, poster: request.poster, releaseInfo: '' } },
-      season: request.season,
-      episode: request.episode,
-    })
-    setCatalogOpen(true)
-  }
-
   return (
     <>
     {shownOpening !== null ? (
@@ -587,23 +568,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
             : null}
           {uploadFailed !== null ? <span className="upload-chip is-error">{t('room.uploadFailed')}</span> : null}
           <StatusPill status={sync.buffering ? 'buffering' : sync.connected ? 'live' : 'connecting'} label={t(sync.buffering ? 'status.buffering' : sync.connected ? 'status.live' : 'status.connecting')} />
-          {sync.isController ? (
-            <Button
-              className={`sync-toggle ${sync.gatingEnabled ? 'is-on' : ''}`}
-              variant="ghost"
-              size="small"
-              role="switch"
-              aria-checked={sync.gatingEnabled}
-              onClick={() => {
-                if (!sync.send('gating', { enabled: !sync.gatingEnabled })) toast(t('room.offlineCommand'))
-              }}
-            >
-              <span className="sync-toggle-box" aria-hidden="true">
-                {sync.gatingEnabled ? <Check size={11} strokeWidth={3.5} /> : null}
-              </span>
-              {t('room.gating')}
-            </Button>
-          ) : null}
           {sync.isController ? (
             <MediaSwitch
               t={t}
@@ -658,16 +622,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               onChapters={() => setSidePanel((panel) => panel === 'chapters' ? null : 'chapters')}
               overlay={
                 <>
-                  {sync.waiting !== null ? (
-                    <WaitingPanel
-                      waiting={sync.waiting}
-                      members={sync.members}
-                      isController={sync.isController}
-                      selfId={sync.memberId}
-                      onIgnore={(memberId) => sync.send('ignore', { targetId: memberId })}
-                      t={t}
-                    />
-                  ) : null}
                   {nextEpisode.pending && nowPlaying ? (
                     <NextEpisodeCard
                       video={nextEpisode.pending.video}
@@ -681,20 +635,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
               }
             />
           )}
-          <div className="presence-row">
-            {sync.members.map((member) => (
-              <MemberChip
-                key={member.id}
-                member={member}
-                isController={member.id === sync.controllerId}
-                holdsFile={liveRoom.sourceOrigin === 'file' && member.id === liveRoom.sourceMemberId}
-                canAct={sync.isController && member.id !== sync.memberId}
-                onTransfer={() => transferControls(member)}
-                onKick={() => sync.send('kick', { targetId: member.id })}
-                t={t}
-              />
-            ))}
-          </div>
         </section>
         {sidePanel === 'chapters' ? (
           <ChaptersPanel
@@ -720,35 +660,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       />
       {swapProbes.length > 0 && shownGate === 'preparing' ? <div className="swap-probes"><WorkerProbes probes={swapProbes} t={t} /></div> : null}
       {sourceError ? <div className="error-card compact" role="alert">{t(sourceError)}</div> : null}
-      {visibleRequests.length > 0 ? (
-        <div className="request-stack" aria-live="polite">
-          {visibleRequests.map((request) => (
-            <div key={request.id} className="request-card raised">
-              {request.poster ? <img src={request.poster} alt="" /> : null}
-              <div className="request-copy">
-                <p><strong>{request.from}</strong> {t('request.asked')} <strong>{request.name}</strong>
-                  {request.season != null && request.episode != null && (request.season > 0 || request.episode > 0)
-                    ? ` · S${String(request.season).padStart(2, '0')}E${String(request.episode).padStart(2, '0')}`
-                    : ''}
-                </p>
-                {sync.isController ? (
-                  <button type="button" className="request-open" onClick={() => openRequestedTitle(request)}>
-                    {t('request.viewSources')}
-                  </button>
-                ) : null}
-              </div>
-              <button
-                type="button"
-                className="dialog-close request-dismiss"
-                aria-label={t('request.dismiss')}
-                onClick={() => setDismissedRequests((current) => [...current, request.id])}
-              >
-                <X size={13} aria-hidden="true" />
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
       {catalogOpen ? (
         <Suspense fallback={null}>
           <CatalogOverlay
@@ -778,31 +689,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         onExpired={leaveIdle}
         t={t}
       />
-      <Dialog open={transferTo !== null} onOpenChange={(open) => { if (!open) setTransferTo(null) }}>
-        {transferTo ? (
-          <DialogContent
-            className="still-there-dialog"
-            closeLabel={t('room.transferCancel')}
-            title={t('room.transferFileTitle')}
-            description={t('room.transferFileGuide')}
-            onCloseClick={() => setTransferTo(null)}
-          >
-            <div className="closed-idle-actions">
-              <button
-                type="button"
-                className="primary-button"
-                autoFocus
-                onClick={() => { sync.send('transfer', { targetId: transferTo.id }); setTransferTo(null) }}
-              >
-                {t('room.transferConfirm')}
-              </button>
-              <button type="button" className="secondary-button" onClick={() => setTransferTo(null)}>
-                {t('room.transferCancel')}
-              </button>
-            </div>
-          </DialogContent>
-        ) : null}
-      </Dialog>
       <Dialog open={sync.left} onOpenChange={() => undefined}>
         {sync.left ? (
           <DialogContent
@@ -857,52 +743,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
 
 // The film icon marks whose computer the video is on; for the controller, a
 // right-click opens what can be done to that person.
-function MemberChip({ member, isController, holdsFile, canAct, onTransfer, onKick, t }: {
-  member: Member
-  isController: boolean
-  holdsFile: boolean
-  canAct: boolean
-  onTransfer: () => void
-  onKick: () => void
-  t: Translator
-}) {
-  const className = `member-chip ${isController ? 'is-controller' : ''}`
-  const body = (
-    <>
-      {member.nickname}
-      {isController ? <Crown size={12} aria-hidden="true" /> : null}
-      {holdsFile ? (
-        <span className="member-holds-file" title={t('room.holdsFile').replace('{name}', member.nickname)}>
-          <FileVideo size={12} aria-hidden="true" />
-        </span>
-      ) : null}
-    </>
-  )
-  if (!canAct) return <span className={className}>{body}</span>
-  const pick = (close: () => void, action: () => void) => () => { close(); action() }
-  return (
-    <MorphingMenu
-      openOn="contextmenu"
-      haspopup="menu"
-      minWidth={0}
-      ariaLabel={t('room.memberMenu').replace('{name}', member.nickname)}
-      triggerClassName={className}
-      panelClassName="media-switch-panel"
-      trigger={() => body}
-    >
-      {(close) => (
-        <div className="media-switch-menu">
-          <button type="button" onClick={pick(close, onTransfer)}>
-            <Crown size={15} aria-hidden="true" />{t('room.transferHost')}
-          </button>
-          <button type="button" onClick={pick(close, onKick)}>
-            <UserX size={15} aria-hidden="true" />{t('room.kickMember')}
-          </button>
-        </div>
-      )}
-    </MorphingMenu>
-  )
-}
 
 /** The one entry point for putting something else on, as a MorphingMenu. */
 function MediaSwitch({ onOpen, onCatalog, onTorrent, onYoutube, onFile, t }: {
@@ -944,56 +784,8 @@ function MediaSwitch({ onOpen, onCatalog, onTorrent, onYoutube, onFile, t }: {
   )
 }
 
-function WaitingPanel({ waiting, members, isController, selfId, onIgnore, t }: {
-  waiting: RoomWaiting
-  members: Member[]
-  isController: boolean
-  selfId: string
-  onIgnore: (memberId: string) => void
-  t: Translator
-}) {
-  const names = new Map(members.map((member) => [member.id, member.nickname]))
-  return (
-    <div className="waiting-panel raised" role="status">
-      <strong>{t('room.waitingStart')}</strong>
-      {waiting.readiness.map((member) => (
-        <span key={member.memberId} className={`waiting-row ${member.ready ? 'is-ready' : ''} ${member.ignored ? 'is-ignored' : ''}`}>
-          {names.get(member.memberId) ?? member.memberId}
-          <span className="waiting-state">
-            {member.ignored
-              ? t('room.waitingIgnored')
-              : member.ready ? t('room.waitingReady') : t('room.waitingBuffering')}
-            {isController && !member.ignored && !member.ready && member.memberId !== selfId ? (
-              <Button variant="ghost" size="small" onClick={() => onIgnore(member.memberId)}>
-                {t('room.ignore')}
-              </Button>
-            ) : null}
-          </span>
-        </span>
-      ))}
-    </div>
-  )
-}
 
 /** An arrival is audible as well as visible; a departure stays silent. */
-function usePresenceNotices(presence: PresenceEvent[], t: Translator): void {
-  const { toast } = useToast()
-  const lastSeenRef = useRef(0)
-
-  useEffect(() => {
-    const fresh = presence.filter((event) => event.id > lastSeenRef.current)
-    if (fresh.length === 0) return
-    lastSeenRef.current = fresh[fresh.length - 1].id
-    for (const event of fresh) {
-      toast(
-        <span className={event.kind === 'leave' ? 'is-leave' : ''}>
-          <strong>{event.nickname}</strong> {t(event.kind === 'join' ? 'presence.joined' : 'presence.left')}
-        </span>,
-      )
-      if (event.kind === 'join') playJoinChime()
-    }
-  }, [presence, t, toast])
-}
 
 
 /** A live's failure comes as a code; the page says it in words. */
