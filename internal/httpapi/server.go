@@ -85,11 +85,6 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	if hub != nil {
 		onSubsStored = hub.NotifyRoomUpdated
 	}
-	var screenAuthorizer memberAuthorizer
-	if hub != nil {
-		screenAuthorizer = hub
-	}
-	RegisterScreenshareRoutes(r.Group("/api"), store, cfg, screenAuthorizer, onSubsStored)
 	RegisterSubtitlesRoute(r.Group("/api"), store, cfg, options.subtitlePublisher, onSubsStored)
 	var authorizer memberAuthorizer
 	if hub != nil {
@@ -99,7 +94,6 @@ func NewServer(cfg config.Config, store *room.Store, hub *syncapi.Hub, opts ...S
 	RegisterClientMediaRoutes(r.Group("/api"), store, cfg, options.clientMediaBucket, options.clientMediaHooks)
 	RegisterTorrentRoutes(r.Group("/api"), cfg, options.torrentAccess)
 	RegisterYoutubeRoutes(r.Group("/api"), cfg, options.torrentAccess)
-	RegisterLiveRoutes(r.Group("/api"), store, cfg, authorizer, options.sourceHooks, options.torrentAccess.Service)
 	if hub != nil {
 		r.GET("/ws/rooms/:id", hub.HandleWS)
 		r.GET("/api/live", func(c *gin.Context) {

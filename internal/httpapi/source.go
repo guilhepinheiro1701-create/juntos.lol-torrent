@@ -16,6 +16,12 @@ import (
 
 const maxSourceBodyBytes = 4 << 10
 
+// memberAuthorizer proves that a memberId+capability pair belongs to a seat
+// the room's socket handed out; the hub is the only implementation.
+type memberAuthorizer interface {
+	AuthorizeMember(roomID, memberID, capability string) bool
+}
+
 // SourceHooks lets a room change what it is playing without httpapi depending on
 // the media pipeline. Both are nil-safe, and CancelMedia runs before the old files
 // are removed so ffmpeg is not left writing into a directory being deleted.

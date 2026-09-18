@@ -76,7 +76,6 @@ func main() {
 	}
 	var swarmMu sync.Mutex
 	lastSwarm := map[string]worker.SwarmStats{}
-	torrents.OnLive = httpapi.LiveReporter(store, hub.NotifyStatus)
 	torrents.OnSwarm = func(roomID string, stats worker.SwarmStats) {
 		swarmMu.Lock()
 		same := lastSwarm[roomID] == stats

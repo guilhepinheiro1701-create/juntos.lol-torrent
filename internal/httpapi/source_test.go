@@ -16,6 +16,12 @@ import (
 	"github.com/giulianoo0/ss/internal/room"
 )
 
+type testMemberAuthorizer struct{ allowed bool }
+
+func (a testMemberAuthorizer) AuthorizeMember(roomID, memberID, capability string) bool {
+	return a.allowed && roomID == "r1" && strings.HasPrefix(memberID, "m") && capability == "secret-capability"
+}
+
 func postSource(t *testing.T, e *gin.Engine, roomID, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	w := httptest.NewRecorder()
