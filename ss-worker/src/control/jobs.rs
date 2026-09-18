@@ -54,6 +54,16 @@ pub async fn run(job: Job, engine: &Arc<Engine>, app: &Arc<AppState>, drain: &to
             engine.release(ih, lease).await;
             ok(json!({}))
         }
+        "keep" => {
+            let (Some(ih), Some(on)) = (job.infohash.as_deref(), job.keep) else {
+                return err("bad_job", "keep needs infohash and keep".into());
+            };
+            if engine.set_keep(ih, on) {
+                ok(json!({ "infohash": ih, "keep": on }))
+            } else {
+                err("unknown_torrent", "no such torrent".into())
+            }
+        }
         "revoke" => {
             let Some(jti) = job.jti.as_deref() else { return err("bad_job", "revoke needs jti".into()) };
             app.revoke(jti, job.exp);

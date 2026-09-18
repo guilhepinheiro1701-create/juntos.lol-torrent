@@ -39,10 +39,25 @@ pub struct Entry {
     pub floors: Floors,
     pub retried: bool,
     pub fill: Fill,
+    /// Guardado por quem assiste: fica no disco depois da sessão, para poder
+    /// ser assistido offline. Isenta do reaper, do despejo por cota e do
+    /// `shed_fill` — as três rotinas que existem justamente para devolver
+    /// espaço, e que sem isso apagariam o download logo depois de ele acabar.
+    pub keep: bool,
     disk: Mutex<(u64, Option<Instant>)>,
 }
 
 const DISK_TTL: Duration = Duration::from_secs(5);
+
+impl Entry {
+    /// Se o espaço deste torrent pode ser retomado. É a pergunta que o reaper,
+    /// o despejo por cota e o `shed_fill` fazem — os três num lugar só, porque
+    /// esquecer um deles apagaria em silêncio um download marcado para
+    /// assistir offline.
+    pub fn reclaimable(&self) -> bool {
+        self.leases.is_empty() && !self.keep
+    }
+}
 
 impl Entry {
     pub fn new(handle: Handle, phase: Phase, selected_bytes: u64) -> Self {
@@ -58,6 +73,7 @@ impl Entry {
             floors: Floors::default(),
             retried: false,
             fill: Fill::Off,
+            keep: false,
             disk: Mutex::new((0, None)),
         }
     }

@@ -509,7 +509,10 @@ impl Engine {
             let Some(entry) = map.get_mut(&infohash) else { return };
             entry.leases.remove(lease_id);
             entry.touch();
-            if entry.leases.is_empty() && entry.fill != Fill::Off {
+            if entry.keep {
+                // Guardado: o fill continua, e é ele que segura os bytes.
+                false
+            } else if entry.leases.is_empty() && entry.fill != Fill::Off {
                 entry.fill = Fill::Off;
                 true
             } else {
@@ -883,6 +886,48 @@ impl Engine {
         self.set_fill(infohash, next, full, footprint);
     }
 
+    /// Marca (ou desmarca) um torrent como guardado para assistir offline.
+    ///
+    /// Ligado, dois efeitos: as rotinas que devolvem espaço passam a ignorá-lo
+    /// (reaper, despejo por cota e `shed_fill`), e o fill é forçado, que é o
+    /// que faz a seleção abrir para o arquivo inteiro em vez de só a janela do
+    /// leitor. Desligado, ele volta a ser um torrent comum e o disco é
+    /// recuperado pelas mesmas rotinas, na hora em que elas precisarem.
+    ///
+    /// Devolve `false` quando o infohash não está no mapa.
+    pub fn set_keep(&self, infohash: &str, on: bool) -> bool {
+        let infohash = infohash.to_ascii_lowercase();
+        let (known, was) = {
+            let mut map = self.torrents.lock();
+            match map.get_mut(&infohash) {
+                Some(entry) => {
+                    let was = entry.keep;
+                    entry.keep = on;
+                    entry.touch();
+                    (true, was)
+                }
+                None => (false, false),
+            }
+        };
+        if !known || was == on {
+            return known;
+        }
+        let Some(handle) = self.handle(&infohash) else { return true };
+        let (full, footprint) = {
+            let guard = handle.metadata.load();
+            let Some(meta) = guard.as_ref() else { return true };
+            let index = self.torrents.lock().get(&infohash).and_then(|e| e.selected_file);
+            match index.and_then(|i| meta.file_infos.get(i)) {
+                Some(f) => (f.len, window::footprint(f.len, window::AHEAD, window::BEHIND, window::PIN)),
+                None => return true,
+            }
+        };
+        self.set_fill(&infohash, if on { Fill::Filling } else { Fill::Off }, full, footprint);
+        self.apply_window_with(&infohash, !on);
+        tracing::info!(infohash = %infohash, keep = on, "keep");
+        true
+    }
+
     fn set_fill(&self, infohash: &str, next: Fill, full: u64, footprint: u64) {
         let from = {
             let mut map = self.torrents.lock();
@@ -919,7 +964,7 @@ impl Engine {
             let victim = {
                 let map = self.torrents.lock();
                 map.iter()
-                    .filter(|(_, e)| e.fill != Fill::Off)
+                    .filter(|(_, e)| e.fill != Fill::Off && !e.keep)
                     .map(|(id, _)| (self.disk.reserved(id), id.clone()))
                     .max()
             };
@@ -1003,7 +1048,7 @@ impl Engine {
             let map = self.torrents.lock();
             let mut idle: Vec<_> = map
                 .iter()
-                .filter(|(_, e)| e.leases.is_empty())
+                .filter(|(_, e)| e.reclaimable())
                 .map(|(id, e)| (e.last_active, id.clone(), e.handle.clone()))
                 .collect();
             idle.sort_by_key(|(at, _, _)| *at);
@@ -1021,6 +1066,7 @@ impl Engine {
         let removed = {
             let mut map = self.torrents.lock();
             match map.get(infohash) {
+                Some(e) if e.keep => false,
                 Some(e) if e.leases.is_empty() => map.remove(infohash).is_some(),
                 _ => false,
             }
@@ -1104,7 +1150,7 @@ impl Engine {
     pub(crate) fn idle_candidates(&self) -> Vec<(String, Handle, Phase, Duration)> {
         let map = self.torrents.lock();
         map.iter()
-            .filter(|(_, e)| e.leases.is_empty())
+            .filter(|(_, e)| e.reclaimable())
             .map(|(id, e)| {
                 (
                     id.clone(),

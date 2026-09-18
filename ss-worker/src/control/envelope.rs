@@ -31,6 +31,8 @@ pub struct Job {
     #[serde(default)]
     pub jti: Option<String>,
     #[serde(default)]
+    pub keep: Option<bool>,
+    #[serde(default)]
     pub limits: Option<Limits>,
     #[serde(default)]
     pub remux: Option<serde_json::Value>,
@@ -159,6 +161,7 @@ mod tests {
             lease_id: None,
             trackers: vec![],
             jti: None,
+            keep: None,
             limits: None,
             remux: None,
             youtube: None,
