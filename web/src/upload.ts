@@ -198,17 +198,18 @@ export interface RoomSource {
 }
 
 // Repoints an existing room at a new source; everyone stays where they are.
+/** Repoints the room at a new source. The proof is the owner token this
+ * browser kept when it created the room, so the call does not wait on a
+ * socket seat to exist. */
 export async function changeRoomSource(
   roomID: string,
-  memberId: string,
-  capability: string,
   kind: 'upload' | 'youtube',
   fileName?: string,
 ): Promise<RoomSource> {
   const response = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/source`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ memberId, capability, kind, fileName }),
+    body: JSON.stringify({ ownerToken: ownerTokenFor(roomID), kind, fileName }),
   })
   if (!response.ok) throw new Error(`change source failed (${response.status})`)
   return await response.json() as RoomSource
@@ -308,7 +309,6 @@ export function startYoutubeUpload(
   roomID: string,
   mediaGeneration: number,
   session: YoutubeSession,
-  auth?: TorrentAuth,
 ): void {
   releaseExternal(roomID)
   saveResumableSource(roomID, { kind: 'youtube', fileName: youtubeFileName(session), url: session.url })
@@ -319,7 +319,7 @@ export function startYoutubeUpload(
   const ownerToken = ownerTokenFor(roomID)
   const start = mocksEnabled
     ? Promise.resolve<string | null>(null)
-    : backendFor(session).start(session, { roomId: roomID, mediaGeneration, ownerToken: ownerToken || undefined, auth })
+    : backendFor(session).start(session, { roomId: roomID, mediaGeneration, ownerToken: ownerToken || undefined })
   void start.then((refusal) => {
     if (refusal !== null) {
       lastFailureDetail = refusal
@@ -354,11 +354,6 @@ export function startFileUpload(
   startRoomUpload(roomID, mediaGeneration, { kind: 'file', file }, [], { onProgress })
 }
 
-export interface TorrentAuth {
-  memberId: string
-  capability: string
-}
-
 /**
  * Hands the torrent to the fleet. The worker produces the video or nobody
  * does: a refusal is reported as the room's failure, never remuxed here.
@@ -369,7 +364,6 @@ export function startTorrentUpload(
   mediaGeneration: number,
   { file, session }: TorrentUploadSource,
   onProgress?: (progress: UploadProgress) => void,
-  auth?: TorrentAuth,
 ): void {
   releaseExternal(roomID)
   torrentSessions.set(roomID, session)
@@ -384,7 +378,7 @@ export function startTorrentUpload(
   const release = () => {
     if (torrentSessions.get(roomID) === session) torrentSessions.delete(roomID)
   }
-  void startRemoteRemux(roomID, mediaGeneration, session, auth).then((refusal) => {
+  void startRemoteRemux(roomID, mediaGeneration, session).then((refusal) => {
     if (refusal !== null) {
       lastFailureDetail = refusal
       finishEntry(roomID, entry, REMUX_UNAVAILABLE, () => { release(); session.destroy() })
@@ -401,12 +395,11 @@ async function startRemoteRemux(
   roomID: string,
   mediaGeneration: number,
   session: TorrentSession,
-  auth?: TorrentAuth,
 ): Promise<string | null> {
   if (mocksEnabled) return null
   if (!session.jobId) return 'torrent session has no fleet job'
   const ownerToken = ownerTokenFor(roomID)
-  if (!ownerToken && !auth) return 'no proof of ownership for the room'
+  if (!ownerToken) return 'no proof of ownership for the room'
   try {
     const response = await fetch(`/api/torrents/${encodeURIComponent(session.jobId)}/remux`, {
       method: 'POST',
@@ -416,7 +409,7 @@ async function startRemoteRemux(
         mediaGeneration,
         requestId: crypto.randomUUID(),
         startMs: 0,
-        auth: ownerToken ? { ownerToken } : auth,
+        auth: { ownerToken },
       }),
     })
     if (response.status === 202) return null

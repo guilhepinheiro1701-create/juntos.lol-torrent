@@ -59,7 +59,7 @@ import {
   uploadActive,
   resumableSourceFor,
   clearResumableSource,
-  sourceOriginFor,
+  ownerTokenFor,
 } from '../upload'
 import { expectedPositionMs } from '../player/position'
 import type { TorrentStats } from '../torrent'
@@ -250,7 +250,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         && !liveRegions.some((region) => regionHolds(region, resumeWanted))))
   const resumeTried = useRef(false)
   useEffect(() => {
-    if (resumeTried.current || !sync.memberId || !sync.capability) return
+    if (resumeTried.current || !ownerTokenFor(room.id)) return
     if (!needsPreparo) return
     if (room.sourceKind !== 'upload') { resumeTried.current = true; return }
     // The fleet's first heartbeat lands seconds after the handoff; the tab that
@@ -263,15 +263,15 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     void (async () => {
       try {
         if (source.kind === 'url') {
-          const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', source.fileName)
+          const next = await changeRoomSource(room.id, 'upload', source.fileName)
           startUrlUpload(room.id, next.mediaGeneration, source.url ?? '', source.fileName, source.size ?? 0)
           return
         }
         if (source.kind === 'youtube') {
           const session = await openYoutube(source.url ?? '')
           try {
-            const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'youtube', youtubeFileName(session))
-            startYoutubeUpload(room.id, next.mediaGeneration, session, { memberId: sync.memberId, capability: sync.capability })
+            const next = await changeRoomSource(room.id, 'youtube', youtubeFileName(session))
+            startYoutubeUpload(room.id, next.mediaGeneration, session)
           } catch (error) {
             session.destroy()
             throw error
@@ -286,8 +286,8 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         }
         await session.select(file.path)
         try {
-          const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', file.name)
-          startTorrentUpload(room.id, next.mediaGeneration, { file, session }, undefined, { memberId: sync.memberId, capability: sync.capability })
+          const next = await changeRoomSource(room.id, 'upload', file.name)
+          startTorrentUpload(room.id, next.mediaGeneration, { file, session })
         } catch (error) {
           session.destroy()
           throw error
@@ -298,7 +298,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
         if (!torrentErrorRetryable(error) || !youtubeErrorRetryable(error)) clearResumableSource(room.id)
       }
     })()
-  }, [needsPreparo, room.id, room.sourceKind, sync.memberId, sync.capability, t, toast])
+  }, [needsPreparo, room.id, room.sourceKind, t, toast])
   const [sidePanel, setSidePanel] = useState<'chapters' | null>(null)
   const [uploadProgress, setUploadProgress] = useState<RoomUploadProgress | null>(null)
   const [uploadFailed, setUploadFailed] = useState<string | null>(null)
@@ -319,12 +319,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
   const fileInputRef = useRef<HTMLInputElement>(null)
   // A stage room paints a relay broadcast: no player, no timeline, no buffering gate.
   const [catalogOpen, setCatalogOpen] = useState(false)
-  useEffect(() => {
-    if (!sync.memberId || !sync.connected) return
-    const origin = sourceOriginFor(room.id)
-    if (!origin || !(uploadActive(room.id) || remuxHandleFor(room.id))) return
-    sync.send('source', { origin })
-  }, [room.id, sync.memberId, sync.connected, sync.send, liveRoom.mediaGeneration])
   const [catalogFocus, setCatalogFocus] = useState<OverlayFocus | null>(null)
   const [nowPlaying, setNowPlaying] = useState<NowPlaying | null>(() => {
     try {
@@ -366,7 +360,7 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     if (!file) return
     void swapSource(async () => {
       await assertReadable(file)
-      const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', file.name)
+      const next = await changeRoomSource(room.id, 'upload', file.name)
       startFileUpload(room.id, next.mediaGeneration, file)
     })
   }
@@ -375,12 +369,12 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     void swapSource(async () => {
       let next
       try {
-        next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', file.name)
+        next = await changeRoomSource(room.id, 'upload', file.name)
       } catch (error) {
         session.destroy()
         throw error
       }
-      startTorrentUpload(room.id, next.mediaGeneration, { file, session }, undefined, { memberId: sync.memberId, capability: sync.capability })
+      startTorrentUpload(room.id, next.mediaGeneration, { file, session })
     })
   }
 
@@ -394,12 +388,12 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
       }
       let next
       try {
-        next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'youtube', youtubeFileName(session))
+        next = await changeRoomSource(room.id, 'youtube', youtubeFileName(session))
       } catch (error) {
         session.destroy()
         throw error
       }
-      startYoutubeUpload(room.id, next.mediaGeneration, session, { memberId: sync.memberId, capability: sync.capability })
+      startYoutubeUpload(room.id, next.mediaGeneration, session)
     })
   }
 
@@ -415,14 +409,14 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
     void swapSource(async () => {
       if (pick.stream.location.kind === 'url') {
         const { url } = pick.stream.location
-        const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', pick.displayName)
+        const next = await changeRoomSource(room.id, 'upload', pick.displayName)
         startUrlUpload(room.id, next.mediaGeneration, url, `${pick.displayName}.mkv`, 0)
         return
       }
       const opened = await openCatalogStream(pick.stream, pick.target, undefined, { onProbe: setSwapProbes })
       try {
-        const next = await changeRoomSource(room.id, sync.memberId, sync.capability, 'upload', pick.displayName)
-        startTorrentUpload(room.id, next.mediaGeneration, opened, undefined, { memberId: sync.memberId, capability: sync.capability })
+        const next = await changeRoomSource(room.id, 'upload', pick.displayName)
+        startTorrentUpload(room.id, next.mediaGeneration, opened)
       } catch (error) {
         opened.session.destroy()
         throw error
@@ -602,7 +596,6 @@ function ConnectedRoom({ room, nickname }: { room: RoomInfo; nickname: string })
             <Player
               room={liveRoom}
               isController={sync.isController}
-              memberId={sync.memberId}
               hostSubtitles={sync.hostSubtitles}
               videoRef={videoRef}
               send={sync.send}

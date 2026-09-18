@@ -524,7 +524,7 @@ func newImportTestRoom(t *testing.T) (*gin.Engine, *room.Store, chan string, str
 	now := time.Now()
 	require.NoError(t, store.Create(t.Context(), &room.Room{
 		ID: "r1", FileName: "movie.mkv", Status: "ready", ControllerID: "host", MediaGeneration: 2,
-		CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+		OwnerToken: "owner-secret", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 	}))
 	stored := make(chan string, 4)
 	e := gin.New()
@@ -572,6 +572,25 @@ func TestImportSubtitleRefusesAnyoneButTheController(t *testing.T) {
 	w := postImportedSubtitle(t, e, "r1", `{"memberId":"guest","mediaGeneration":2,"language":"por","title":"x","vtt":`+strconvQuote(validVTT)+`}`)
 	require.Equal(t, http.StatusForbidden, w.Code)
 	require.Contains(t, w.Body.String(), "not_controller")
+}
+
+// The owner token imports without a socket seat, and a room that has no owner
+// token is not opened by an empty one.
+func TestImportSubtitleAcceptsTheOwnerToken(t *testing.T) {
+	e, store, _, _ := newImportTestRoom(t)
+
+	w := postImportedSubtitle(t, e, "r1", `{"ownerToken":"owner-secret","mediaGeneration":2,"language":"por","title":"x","vtt":`+strconvQuote(validVTT)+`}`)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	got, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Len(t, got.SubtitleTracks, 1)
+
+	w = postImportedSubtitle(t, e, "r1", `{"ownerToken":"guessed","mediaGeneration":2,"language":"por","title":"x","vtt":`+strconvQuote(validVTT)+`}`)
+	require.Equal(t, http.StatusForbidden, w.Code)
+
+	// Neither proof at all is a refusal, where the binding used to answer 400.
+	w = postImportedSubtitle(t, e, "r1", `{"mediaGeneration":2,"language":"por","title":"x","vtt":`+strconvQuote(validVTT)+`}`)
+	require.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func TestImportSubtitleRefusesAReplacedSource(t *testing.T) {

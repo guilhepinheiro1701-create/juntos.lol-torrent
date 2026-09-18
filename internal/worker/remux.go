@@ -3,7 +3,6 @@ package worker
 import (
 	"context"
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -192,8 +191,7 @@ func (o *RemuxOrchestrator) Start(ctx context.Context, sessionID, jobID string, 
 	}
 	switch {
 	case req.Auth.OwnerToken != "":
-		if subtle.ConstantTimeCompare([]byte(req.Auth.OwnerToken), []byte(storedRoom.OwnerToken)) != 1 ||
-			storedRoom.OwnerToken == "" {
+		if !storedRoom.OwnedBy(req.Auth.OwnerToken) {
 			return nil, ErrRemuxDenied
 		}
 	case req.Auth.MemberID != "" && req.Auth.Capability != "":

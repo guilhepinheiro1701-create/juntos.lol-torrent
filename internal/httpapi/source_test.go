@@ -36,7 +36,7 @@ func sourceRoom(t *testing.T, cfg config.Config, store *room.Store) *gin.Engine 
 	now := time.Now()
 	require.NoError(t, store.CreateWithMember(t.Context(), &room.Room{
 		ID: "r1", FileName: "first.mkv", Status: "ready", SourceKind: room.SourceUpload,
-		ControllerID: "m1", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+		ControllerID: "m1", OwnerToken: "owner-secret", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
 		AudioTracks:    []room.TrackInfo{{Index: 0, Language: "eng", Codec: "aac"}},
 		SubtitleTracks: []room.TrackInfo{{Index: 0, Language: "eng", Codec: "webvtt"}},
 	}, room.Member{ID: "m1", Nickname: "giuli", JoinedAt: now}))
@@ -136,8 +136,13 @@ func TestChangeSourceRejectsBadInput(t *testing.T) {
 		{name: "unknown kind", body: `{"memberId":"m1","capability":"secret-capability","kind":"webcam"}`, code: http.StatusBadRequest},
 		{name: "upload without a file name", body: `{"memberId":"m1","capability":"secret-capability","kind":"upload"}`, code: http.StatusBadRequest},
 		{name: "upload with a path", body: `{"memberId":"m1","capability":"secret-capability","kind":"upload","fileName":"../escape.mkv"}`, code: http.StatusBadRequest},
-		{name: "no capability", body: `{"memberId":"m1","kind":"screen"}`, code: http.StatusBadRequest},
+		// A missing proof is a refusal, not a malformed body: neither the owner
+		// token nor the capability is required on its own, so binding cannot
+		// reject the request before the two are weighed against each other.
+		{name: "no proof at all", body: `{"kind":"screen"}`, code: http.StatusForbidden},
+		{name: "no capability", body: `{"memberId":"m1","kind":"screen"}`, code: http.StatusForbidden},
 		{name: "wrong capability", body: `{"memberId":"m1","capability":"guessed","kind":"screen"}`, code: http.StatusForbidden},
+		{name: "wrong owner token", body: `{"ownerToken":"guessed","kind":"screen"}`, code: http.StatusForbidden},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -171,4 +176,38 @@ func TestCreateScreenRoomNeedsNoFile(t *testing.T) {
 	require.Equal(t, http.StatusCreated, w.Code)
 	require.Contains(t, w.Body.String(), `"sourceKind":"screen"`)
 	require.Contains(t, w.Body.String(), `"status":"ready"`)
+}
+
+// The owner token is what a single-viewer session has: it is handed out when
+// the room is created and needs no socket seat behind it.
+func TestChangeSourceAcceptsTheOwnerToken(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	e := sourceRoom(t, cfg, store)
+	RegisterSourceRoute(e.Group("/api"), store, cfg, nil, SourceHooks{})
+
+	w := postSource(t, e, "r1", `{"ownerToken":"owner-secret","kind":"upload","fileName":"second.mkv"}`)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	stored, err := store.Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Equal(t, "second.mkv", stored.FileName)
+	require.Equal(t, "uploading", stored.Status)
+}
+
+// A room stored without an owner token must not be opened by an empty one:
+// otherwise every such room would answer to a request that proves nothing.
+func TestChangeSourceRefusesAnEmptyOwnerTokenAgainstAnUnownedRoom(t *testing.T) {
+	cfg := testCfg(t)
+	store := newTestStore(t)
+	e := sourceRoom(t, cfg, store)
+	now := time.Now()
+	require.NoError(t, store.CreateWithMember(t.Context(), &room.Room{
+		ID: "r2", FileName: "first.mkv", Status: "ready", SourceKind: room.SourceUpload,
+		ControllerID: "m1", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}, room.Member{ID: "m1", Nickname: "giuli", JoinedAt: now}))
+	RegisterSourceRoute(e.Group("/api"), store, cfg, nil, SourceHooks{})
+
+	require.Equal(t, http.StatusForbidden, postSource(t, e, "r2", `{"ownerToken":"","kind":"screen"}`).Code)
+	require.Equal(t, http.StatusForbidden, postSource(t, e, "r2", `{"kind":"screen"}`).Code)
 }

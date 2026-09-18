@@ -32,16 +32,10 @@ export interface YoutubeSession {
   destroy: () => void
 }
 
-export interface YoutubeAuth {
-  memberId: string
-  capability: string
-}
-
 export interface YoutubeStart {
   roomId: string
   mediaGeneration: number
   ownerToken?: string
-  auth?: YoutubeAuth
 }
 
 /** One way of turning a link into a room. */
@@ -198,9 +192,9 @@ export const fleetBackend: YoutubeBackend = {
       await new Promise((resolve) => setTimeout(resolve, POLL_MS))
     }
   },
-  async start(session, { roomId, mediaGeneration, ownerToken, auth }) {
+  async start(session, { roomId, mediaGeneration, ownerToken }) {
     if (!session.jobId) return 'youtube session has no fleet job'
-    if (!ownerToken && !auth) return 'no proof of ownership for the room'
+    if (!ownerToken) return 'no proof of ownership for the room'
     try {
       const response = await fetch(`/api/youtube/${encodeURIComponent(session.jobId)}/remux`, {
         method: 'POST',
@@ -210,7 +204,7 @@ export const fleetBackend: YoutubeBackend = {
           mediaGeneration,
           requestId: crypto.randomUUID(),
           startMs: 0,
-          auth: ownerToken ? { ownerToken } : auth,
+          auth: { ownerToken },
         }),
       })
       if (response.status === 202) return null

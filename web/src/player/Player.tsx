@@ -13,6 +13,7 @@ import type { MediaRegion, PlayState, RoomInfo, TrackInfo } from '../types'
 import { DelayControl } from './DelayControl'
 import { formatDelay, retimeCues } from './subtitleDelay'
 import { publishImportedSubtitle, readSubtitleFile, SUBTITLE_FILE_ACCEPT } from './subtitleImport'
+import { ownerTokenFor } from '../upload'
 import type { HostSubtitles } from './useSync'
 import type { Translator } from '../i18n/useT'
 import { audioTrackLabel } from './audioTracks'
@@ -41,7 +42,6 @@ interface PlayerProps {
   room: RoomInfo
   isController: boolean
   /** This viewer's seat, which a host import is authorized by. */
-  memberId?: string
   hostSubtitles?: HostSubtitles | null
   videoRef: MutableRefObject<HTMLVideoElement | null>
   send: (type: string, payload?: Record<string, unknown>) => void
@@ -157,7 +157,7 @@ function subtitleSource(room: SubtitleBucket, track: TrackInfo): string {
   return `${room.mediaBaseUrl}/subs/sub_${track.index}_${safeLanguage(track.language)}.vtt${version}`
 }
 
-export function Player({ room, isController, memberId = '', hostSubtitles = null, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef, coldWaitRef, coldForRef, remoteSteerAtRef, autoplayBlocked, gatedStart = false, onBuffering, onWait }: PlayerProps) {
+export function Player({ room, isController, hostSubtitles = null, videoRef, send, t, syncState, serverOffsetMs = 0, swarm, overlay, onChapters, mediaOffsetMsRef, seekRef, coldWaitRef, coldForRef, remoteSteerAtRef, autoplayBlocked, gatedStart = false, onBuffering, onWait }: PlayerProps) {
   const { toast } = useToast()
   const refuseControl = useCallback(() => toast(t('room.controllerOnly')), [t, toast])
   const playerRef = useRef<HTMLDivElement>(null)
@@ -607,9 +607,11 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
       toast(t('room.subtitleUnsupported'))
       return
     }
-    if (isController && memberId !== '') {
+    // Publishing is what makes the track survive a reload; it needs the owner
+    // token, so a room this browser does not own keeps the track in memory.
+    if (isController && ownerTokenFor(room.id) !== '') {
       try {
-        const stored = await publishImportedSubtitle(room.id, memberId, room.mediaGeneration, track)
+        const stored = await publishImportedSubtitle(room.id, room.mediaGeneration, track)
         pickSubtitle(stored.index)
         toast(t('room.subtitleImported'))
       } catch (error) {
@@ -626,7 +628,7 @@ export function Player({ room, isController, memberId = '', hostSubtitles = null
       index, language: track.language, title: track.title, codec: assSrc ? 'ass' : 'webvtt', src, assSrc, local: true,
     }])
     pickSubtitle(index)
-  }, [isController, memberId, pickSubtitle, room.id, room.mediaGeneration, t, toast])
+  }, [isController, pickSubtitle, room.id, room.mediaGeneration, t, toast])
 
   const copyFromHost = useCallback(() => {
     if (!hostSubtitles) return

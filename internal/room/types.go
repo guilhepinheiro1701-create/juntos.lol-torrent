@@ -1,6 +1,9 @@
 package room
 
-import "time"
+import (
+	"crypto/subtle"
+	"time"
+)
 
 // TrackInfo describes one audio or subtitle track of the uploaded file.
 // Digest names the bytes behind a subtitle track, so a viewer keying its
@@ -113,6 +116,17 @@ type Room struct {
 	Live                *LiveInfo      `json:"live,omitempty"`
 	CreatedAt           time.Time      `json:"createdAt"`
 	ExpiresAt           time.Time      `json:"expiresAt"`
+}
+
+// OwnedBy reports whether token is the room's owner token: the proof the
+// browser that created the room keeps in localStorage. The comparison is
+// constant-time, and a room with no owner token cannot be owned by anyone —
+// otherwise an empty token would open every such room.
+func (r *Room) OwnedBy(token string) bool {
+	if r == nil || r.OwnerToken == "" || token == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(token), []byte(r.OwnerToken)) == 1
 }
 
 // MediaSnapshot is the part of a room a publish can change, carried inside

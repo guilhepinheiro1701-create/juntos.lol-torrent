@@ -216,6 +216,9 @@ describe('RoomPage retomar o preparo', () => {
   const setup = (mediaRegions: unknown, producerHeartbeatMs?: number) => {
     localStorage.clear()
     localStorage.setItem('ss.nickname', 'Giuli')
+    // Reopening the source is authorized by the owner token, not by a seat on
+    // the socket, so the resume no longer waits for a welcome to arrive.
+    localStorage.setItem('ss.owner.abc123', 'owner-secret')
     localStorage.setItem('ss.resume.abc123', JSON.stringify({
       kind: 'url', fileName: 'movie.mkv', url: 'https://example.test/movie.mkv', size: 10, savedAt: Date.now(),
     }))

@@ -22,6 +22,31 @@ type memberAuthorizer interface {
 	AuthorizeMember(roomID, memberID, capability string) bool
 }
 
+// authorizeController answers whether the caller may act as the room's
+// controller and writes the refusal itself when it may not. The owner token is
+// tried first because it needs no socket: the browser that created the room
+// holds it from the moment the room exists, so a single-viewer session never
+// has to be connected to change what it is watching.
+func authorizeController(c *gin.Context, storedRoom *room.Room, authorizer memberAuthorizer,
+	ownerToken, memberID, capability string) bool {
+	if storedRoom.OwnedBy(ownerToken) {
+		return true
+	}
+	if memberID == "" || capability == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "member_not_found"})
+		return false
+	}
+	if authorizer == nil || !authorizer.AuthorizeMember(storedRoom.ID, memberID, capability) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "member_not_found"})
+		return false
+	}
+	if storedRoom.ControllerID != memberID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "not_controller"})
+		return false
+	}
+	return true
+}
+
 // SourceHooks lets a room change what it is playing without httpapi depending on
 // the media pipeline. Both are nil-safe, and CancelMedia runs before the old files
 // are removed so ffmpeg is not left writing into a directory being deleted.
@@ -33,9 +58,14 @@ type SourceHooks struct {
 	ResetPlayback func(roomID string)
 }
 
+// changeSourceRequest carries one of two proofs that the caller may repoint
+// the room: the owner token the creating browser kept, or a memberId plus the
+// capability its socket seat was given. Neither field is individually
+// required, so the binding cannot demand either; authorizeController does.
 type changeSourceRequest struct {
-	MemberID   string `json:"memberId" binding:"required"`
-	Capability string `json:"capability" binding:"required"`
+	OwnerToken string `json:"ownerToken"`
+	MemberID   string `json:"memberId"`
+	Capability string `json:"capability"`
 	Kind       string `json:"kind" binding:"required"`
 	FileName   string `json:"fileName"`
 }
@@ -80,12 +110,7 @@ func changeSource(store *room.Store, cfg config.Config, authorizer memberAuthori
 			return
 		}
 
-		if authorizer == nil || !authorizer.AuthorizeMember(roomID, req.MemberID, req.Capability) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "member_not_found"})
-			return
-		}
-		if storedRoom.ControllerID != req.MemberID {
-			c.JSON(http.StatusForbidden, gin.H{"error": "not_controller"})
+		if !authorizeController(c, storedRoom, authorizer, req.OwnerToken, req.MemberID, req.Capability) {
 			return
 		}
 

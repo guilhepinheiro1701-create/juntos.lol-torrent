@@ -35,8 +35,6 @@ function formatBytes(bytes: number): string {
 
 export interface DriveRoomTarget {
   roomID: string
-  memberId: string
-  capability: string
 }
 
 export interface DriveSideFile {
@@ -86,7 +84,7 @@ export async function confirmDrivePick(
 ): Promise<void> {
   await session.select(file.path)
   const { url, sideFiles } = await drivePlaybackUrls(file, session)
-  const next = await changeRoomSource(target.roomID, target.memberId, target.capability, 'upload', file.name)
+  const next = await changeRoomSource(target.roomID, 'upload', file.name)
   startRoomUpload(
     target.roomID,
     next.mediaGeneration,

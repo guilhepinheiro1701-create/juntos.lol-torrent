@@ -192,12 +192,13 @@ describe('Player', () => {
     expect(container.querySelector('input[type="file"]')?.getAttribute('accept')).toBe('.srt,.ass,.ssa,.vtt,.sub')
   })
 
-  it('keeps a guest import in this browser and picks it', async () => {
+  it('keeps an import in this browser when the room is not ours and picks it', async () => {
+    localStorage.removeItem('ss.owner.r1')
     vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:local-1'), revokeObjectURL: vi.fn() }))
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('', { status: 404 }))
     const { container } = render(
       <ToastProvider>
-        <Player room={room} isController={false} memberId="m2" videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />
+        <Player room={room} isController videoRef={createRef<HTMLVideoElement>()} send={vi.fn()} t={t} />
       </ToastProvider>,
     )
     const file = new File(['1\n00:00:01,000 --> 00:00:02,000\nOi\n'], 'Filme.srt')
@@ -209,7 +210,8 @@ describe('Player', () => {
     expect(await screen.findByTestId('setting-subtitles')).toHaveTextContent('Filme.srt')
   })
 
-  it('sends a host import to the room and picks it once it lands', async () => {
+  it('sends an import to the room and picks it once it lands', async () => {
+    localStorage.setItem('ss.owner.r1', 'owner-secret')
     const stored = { index: 1000, language: 'und', title: 'Filme.srt', codec: 'webvtt', digest: 'd' }
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => (
       String(url).includes('/subtitles/import')
@@ -219,7 +221,7 @@ describe('Player', () => {
     const send = vi.fn()
     const { container, rerender } = render(
       <ToastProvider>
-        <Player room={{ ...room, mediaGeneration: 2 }} isController memberId="m1" videoRef={createRef<HTMLVideoElement>()} send={send} t={t} />
+        <Player room={{ ...room, mediaGeneration: 2 }} isController videoRef={createRef<HTMLVideoElement>()} send={send} t={t} />
       </ToastProvider>,
     )
     const file = new File(['1\n00:00:01,000 --> 00:00:02,000\nOi\n'], 'Filme.srt')
@@ -227,14 +229,14 @@ describe('Player', () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/rooms/r1/subtitles/import', expect.anything()))
     const importCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/subtitles/import'))!
-    expect(JSON.parse(String(importCall[1]?.body))).toMatchObject({ memberId: 'm1', mediaGeneration: 2, title: 'Filme.srt' })
+    expect(JSON.parse(String(importCall[1]?.body))).toMatchObject({ ownerToken: 'owner-secret', mediaGeneration: 2, title: 'Filme.srt' })
     expect(container.querySelector('track')).toBeNull()
 
     rerender(
       <ToastProvider>
         <Player
           room={{ ...room, mediaGeneration: 2, subtitleTracks: [stored], mediaBaseUrl: 'https://media.example.test/rooms/r1/g2' }}
-          isController memberId="m1" videoRef={createRef<HTMLVideoElement>()} send={send} t={t}
+          isController videoRef={createRef<HTMLVideoElement>()} send={send} t={t}
         />
       </ToastProvider>,
     )
@@ -256,7 +258,7 @@ describe('Player', () => {
     const send = vi.fn()
     render(
       <Player
-        room={withSubs} isController={false} memberId="m2" hostSubtitles={{ track: 1, delayMs: 500 }}
+        room={withSubs} isController={false} hostSubtitles={{ track: 1, delayMs: 500 }}
         videoRef={createRef<HTMLVideoElement>()} send={send} t={t}
       />,
     )

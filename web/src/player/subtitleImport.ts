@@ -1,4 +1,5 @@
 import { convertSubtitleFile, isSubtitleFileName, type VttTrack } from '../subtitleFormats'
+import { ownerTokenFor } from '../upload'
 import type { TrackInfo } from '../types'
 
 /** The text formats the converter knows; bitmap subtitles never apply. */
@@ -14,11 +15,13 @@ export async function readSubtitleFile(file: File): Promise<VttTrack> {
   return { ...track, title: file.name.slice(0, MAX_TITLE) }
 }
 
-/** Posts a host's import so the whole room gets it; resolves with the track
- * as the server indexed it. Throws the server's error code on refusal. */
-export async function publishImportedSubtitle(roomId: string, memberId: string, mediaGeneration: number, track: VttTrack): Promise<TrackInfo> {
+/** Posts an imported track to the room; resolves with the track as the server
+ * indexed it. Throws the server's error code on refusal. The owner token is
+ * the proof, so no socket seat has to exist for a subtitle to be imported. */
+export async function publishImportedSubtitle(roomId: string, mediaGeneration: number, track: VttTrack): Promise<TrackInfo> {
   const body: Record<string, unknown> = {
-    memberId, mediaGeneration, language: track.language, title: track.title, vtt: track.vtt,
+    ownerToken: ownerTokenFor(roomId), mediaGeneration,
+    language: track.language, title: track.title, vtt: track.vtt,
   }
   if (track.ass !== undefined) body.ass = track.ass
   const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/subtitles/import`, {
