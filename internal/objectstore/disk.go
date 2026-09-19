@@ -57,6 +57,17 @@ func NewDisk(root, base string) (*Disk, error) {
 	if err := os.MkdirAll(absolute, 0o755); err != nil {
 		return nil, fmt.Errorf("objectstore: create %s: %w", absolute, err)
 	}
+	// Writing once, now, rather than discovering at the first segment that the
+	// folder is not ours to write in. A mounted volume belongs to whoever owns
+	// it, which is not always the user this process runs as, and a store that
+	// cannot be written to has to say so at boot instead of at play time.
+	probe, err := os.CreateTemp(absolute, ".writable-*")
+	if err != nil {
+		return nil, fmt.Errorf("objectstore: %s is not writable: %w", absolute, err)
+	}
+	probe.Close()
+	os.Remove(probe.Name())
+
 	secret := make([]byte, 32)
 	if _, err := rand.Read(secret); err != nil {
 		return nil, fmt.Errorf("objectstore: generate signing secret: %w", err)

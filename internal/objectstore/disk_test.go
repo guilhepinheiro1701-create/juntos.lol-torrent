@@ -280,3 +280,19 @@ func TestContentTypeFor(t *testing.T) {
 }
 
 func formatUnix(seconds int64) string { return strconv.FormatInt(seconds, 10) }
+
+// A folder that cannot be written to is a store that fails at play time, hours
+// after the boot that should have caught it.
+func TestNewDiskRefusesAFolderItCannotWriteTo(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes anywhere, so there is nothing to refuse")
+	}
+	parent := t.TempDir()
+	readOnly := filepath.Join(parent, "locked")
+	if err := os.Mkdir(readOnly, 0o500); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+	if _, err := NewDisk(readOnly, ""); err == nil {
+		t.Fatal("opened a folder it cannot write to")
+	}
+}

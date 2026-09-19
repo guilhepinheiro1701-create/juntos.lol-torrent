@@ -28,7 +28,7 @@ Write-Host ''
 Write-Host '  juntos.lol, na sua maquina' -ForegroundColor White
 Write-Host '  ==========================' -ForegroundColor DarkGray
 Write-Host ''
-Nota 'Este assistente roda uma vez. Ele confere o Docker, gera as senhas'
+Nota 'Este assistente roda uma vez. Ele confere o Docker, gera o segredo'
 Nota 'desta instalacao e monta os programas. Depois e so o start.'
 
 # ----------------------------------------------------------------- Docker --

@@ -40,8 +40,8 @@ FROM debian:trixie-slim
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends ca-certificates \
 	&& useradd --system --uid 10001 --create-home app \
-	&& mkdir -p /data /web \
-	&& chown -R app:app /data /web \
+	&& mkdir -p /data /media /web \
+	&& chown -R app:app /data /media /web \
 	&& rm -rf /var/lib/apt/lists/*
 
 COPY --from=go-build /bin/server /bin/server

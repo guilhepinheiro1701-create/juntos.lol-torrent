@@ -38,6 +38,11 @@ erro. Nas próximas vezes é quase instantâneo, porque fica guardado.
 **3. Clique em `start.bat`** sempre que quiser assistir. Ele sobe tudo, espera
 o servidor responder e abre o navegador sozinho em `http://localhost:8099`.
 
+Ele também reconstrói o que mudou, então depois de um `git pull` é só clicar
+nele: normalmente leva segundos, e só demora quando o código realmente mudou.
+Se algo morrer no caminho, ele mostra as últimas linhas do servidor ali mesmo,
+em vez de mandar você procurá-las.
+
 **4. `stop.bat`** para desligar. Fechar a janela do `start` **não** desliga:
 as caixas continuam rodando em segundo plano de propósito, para o site seguir
 disponível.
@@ -132,6 +137,10 @@ docker compose ps
 **O vídeo não toca e o console mostra 403 no `PUT`.** A assinatura do envio
 vale quinze minutos e é refeita a cada reinício do servidor. Recarregue a
 página; se insistir, veja `logs -f app`.
+
+**O start diz que o servidor subiu e morreu.** Ele já imprime as últimas linhas
+do `app` logo abaixo, e a última costuma dizer o que faltou. Se falar em
+variável de ambiente, apague o `.env.local` e rode o `setup` de novo.
 
 **"no workers".** O worker não entrou na frota. Quase sempre é o `WORKER_ENROLLMENT_SECRET` diferente entre o `app` e o `worker` — acontece se o `.env.local` foi editado à mão. Veja `logs -f worker`.
 
