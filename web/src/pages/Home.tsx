@@ -25,7 +25,6 @@ import { DrivePicker, drivePlaybackUrls } from '../components/DrivePicker'
 import { Button } from '../ui/Button'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import type { TorrentSession, TorrentVideoFile, WorkerProbe } from '../torrent'
-import { keepTorrent } from '../remoteTorrent'
 import { isTorrentError, torrentErrorKey } from '../torrentErrors'
 import { MorphPanel } from '../ui/MorphPanel'
 import { useMorphingStep } from '../ui/useMorphingStep'
@@ -38,6 +37,8 @@ import { openCatalogStream } from '../catalog/openStream'
 import { WorkerProbes } from '../components/WorkerProbes'
 import { FleetStatus } from '../components/FleetStatus'
 import { nowPlayingFromPick, nowPlayingKey } from '../catalog/useNextEpisode'
+import { buildMagnet } from '../catalog/streams'
+import { queueDownload } from '../queue'
 import type { CatalogMeta, MetaType } from '../catalog/tmdb'
 import type { TitleOpen } from '../catalog/PosterCard'
 
@@ -196,26 +197,52 @@ export function Home() {
     setPendingMedia({ kind: 'stream', pick })
   }
 
-  // Um torrent que fica no disco e um que e devolvido depois sao o mesmo
-  // download: o que muda e so se o worker o guarda no fim. Perguntar aqui, e
-  // nao so no meio da exibicao, e o que deixa "assistir offline depois" ser
-  // uma decisao tomada antes de gastar a banda.
-  const keepWhole = async (jobId: string | undefined) => {
-    if (!jobId) return
-    try {
-      await keepTorrent(jobId, true)
-    } catch (error) {
-      // Nao derruba a exibicao: o filme toca do mesmo jeito, e o botao
-      // Baixar continua la dentro para tentar de novo.
-      console.error('keep on start failed', error)
-      toast(t('room.keepFailed'))
+  /**
+   * Poe o filme para baixar e fica onde esta.
+   *
+   * Nada de sala, nada de player: o worker baixa sozinho porque o trabalho vai
+   * marcado para ficar, e a aba Baixados mostra a fila. Era isto que faltava —
+   * antes, para baixar, era preciso entrar na sala e esperar la dentro.
+   */
+  const enqueue = async (media: PendingMedia): Promise<void> => {
+    if (media.kind === 'torrent') {
+      await queueDownload(
+        { magnet: resumed?.magnet ?? '', filePath: media.file.path },
+        { open: async () => media.session },
+      )
+      return
     }
+    if (media.kind !== 'stream' || media.pick.stream.location.kind !== 'torrent') return
+    await queueDownload({
+      magnet: buildMagnet(media.pick.stream.location, media.pick.displayName),
+      title: media.pick.metaName || media.pick.displayName,
+      poster: media.pick.poster,
+    })
   }
 
   const startUpload = async (keep = false) => {
     const media = pendingMedia
     if (!media || starting) return
     setPendingMedia(null)
+
+    if (keep && torrentBacked(media)) {
+      setStarting(true)
+      // torrentBacked ja garantiu que e 'stream' ou 'torrent'.
+      setStartingLabel(media.kind === 'stream' ? media.pick.displayName
+        : media.kind === 'torrent' ? media.file.name : '')
+      try {
+        await enqueue(media)
+        toast(t('home.queued'))
+      } catch (error) {
+        console.error('queueing a download failed', error)
+        setError(isTorrentError(error) ? t(torrentErrorKey(error)) : t('home.queueFailed'))
+      } finally {
+        setStarting(false)
+        setProgress(null)
+      }
+      return
+    }
+
     setStarting(true)
     setStartingLabel(
       media.kind === 'stream' ? media.pick.displayName
@@ -229,7 +256,6 @@ export function Home() {
         room = await createRoomAndUpload(media.file, '', setProgress)
         fileName = media.file.name
       } else if (media.kind === 'torrent') {
-        if (keep) await keepWhole(media.session.jobId)
         room = await createRoomAndUploadTorrent({ file: media.file, session: media.session }, '', setProgress)
         fileName = media.file.name
       } else if (media.kind === 'youtube') {
@@ -261,7 +287,6 @@ export function Home() {
         setStreamProbes([])
         const opened = await openCatalogStream(media.pick.stream, media.pick.target, undefined, { onProbe: setStreamProbes })
         setProgress(null)
-        if (keep) await keepWhole(opened.session.jobId)
         try {
           room = await createRoomAndUploadTorrent(opened, '', setProgress)
         } catch (error) {

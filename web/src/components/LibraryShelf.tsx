@@ -110,13 +110,18 @@ export function LibraryShelf({ t, onOpened }: {
     )
   }
 
-  return (
-    <div className="library-shelf">
-      <h2>{t('library.title')}</h2>
-      <StoragePicker t={t} />
-      <ul className="library-list">
-        {entries.map((entry) => (
-          <li key={entry.roomId} className="library-card">
+  // Baixando primeiro, prontos depois: quem acabou de por um filme na fila
+  // abre esta aba para ver aquele, e nao para procurá-lo no meio dos outros.
+  // Sem resposta do worker ainda, o filme fica entre os prontos — e onde ele
+  // estava antes de existir fila, e chutar "baixando" seria pior.
+  const baixando = entries.filter((entry) => {
+    const at = progress[entry.jobId]
+    return at !== undefined && at.progress !== null && at.progress < 1
+  })
+  const prontos = entries.filter((entry) => !baixando.includes(entry))
+
+  const cartao = (entry: LibraryEntry) => (
+    <li key={entry.roomId} className="library-card">
             {entry.poster
               ? <img className="library-poster" src={entry.poster} alt="" loading="lazy" />
               : (
@@ -152,8 +157,24 @@ export function LibraryShelf({ t, onOpened }: {
               </button>
             </div>
           </li>
-        ))}
-      </ul>
+  )
+
+  return (
+    <div className="library-shelf">
+      <h2>{t('library.title')}</h2>
+      <StoragePicker t={t} />
+      {baixando.length > 0 ? (
+        <section className="library-group">
+          <h3>{t('library.queue')}<em>{baixando.length}</em></h3>
+          <ul className="library-list">{baixando.map(cartao)}</ul>
+        </section>
+      ) : null}
+      {prontos.length > 0 ? (
+        <section className="library-group">
+          {baixando.length > 0 ? <h3>{t('library.done')}</h3> : null}
+          <ul className="library-list">{prontos.map(cartao)}</ul>
+        </section>
+      ) : null}
     </div>
   )
 }

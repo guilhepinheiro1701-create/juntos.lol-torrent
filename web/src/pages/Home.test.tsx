@@ -181,26 +181,37 @@ describe('Home', () => {
 
   // Decidir "quero isto offline" so no meio da exibicao e decidir depois de ja
   // ter gasto a banda. Os dois modos ficam na mesma tela, antes de comecar.
-  it('offers watching now and keeping the whole film, and marks the job when asked to keep', async () => {
+  // Baixar deixou de ser um efeito colateral de entrar na sala: agora o filme
+  // vai para a fila e a pessoa fica onde estava, livre para fazer outra coisa.
+  it('queues a background download instead of opening the player', async () => {
     const only = { name: 'movie.mkv', path: 'movie.mkv', index: 0, size: 2_000, type: 'video/x-matroska', progress: 0, downloaded: 0, read: vi.fn() }
+    const detach = vi.fn()
     vi.mocked(openTorrent).mockResolvedValue({
       name: 'A film', jobId: 'job-77', files: [only], subtitleFiles: [],
       stats: () => ({ peers: 2, downloadSpeed: 100, downloaded: 0, progress: 0 }),
-      select: vi.fn().mockResolvedValue(undefined), destroy: vi.fn(),
+      select: vi.fn().mockResolvedValue(undefined), destroy: vi.fn(), detach,
     })
 
     render(<MemoryRouter><Home /></MemoryRouter>)
     await openManual(/open torrent|abrir torrent/i)
-    fireEvent.change(await screen.findByLabelText(/magnet link/i), { target: { value: 'magnet:?xt=urn:btih:test' } })
+    fireEvent.change(await screen.findByLabelText(/magnet link/i), { target: { value: 'magnet:?xt=urn:btih:' + 'ab'.repeat(20) } })
     fireEvent.click(screen.getByRole('button', { name: /find files|buscar arquivos/i }))
     fireEvent.click(await screen.findByRole('button', { name: /movie\.mkv/i }))
     await screen.findByRole('heading', { name: /ready to start|pronto para começar/i })
 
     expect(screen.getByRole('button', { name: /watch now|assistir agora/i })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /whole film|filme inteiro/i }))
+    fireEvent.click(screen.getByRole('button', { name: /background|segundo plano/i }))
 
+    // Marcado para ficar, senao o worker pausa dois minutos depois.
     await waitFor(() => expect(keepTorrent).toHaveBeenCalledWith('job-77', true))
-    await waitFor(() => expect(createRoomAndUploadTorrent).toHaveBeenCalledOnce())
+    // E anotado na biblioteca, que e onde a fila aparece.
+    await waitFor(() => {
+      const guardado = JSON.parse(localStorage.getItem('ss.library') ?? '[]') as { fileName: string }[]
+      expect(guardado[0]?.fileName).toBe('movie.mkv')
+    })
+    // Nenhuma sala, nenhum player: a pessoa continua onde estava.
+    expect(createRoomAndUploadTorrent).not.toHaveBeenCalled()
+    expect(detach).toHaveBeenCalled()
   })
 
   // Um arquivo que ja e seu nao tem torrent para guardar, entao a pergunta nao

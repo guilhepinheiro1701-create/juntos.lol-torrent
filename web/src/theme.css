@@ -1074,6 +1074,9 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 /* Baixados: o que ficou no disco, e a volta para dentro dele. */
 .library-shelf { padding: 8px 0 40px; }
 .library-shelf > h2 { margin: 0 0 18px; font-size: 25px; letter-spacing: -.035em; }
+.library-group { margin: 0 0 26px; }
+.library-group h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 13px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; color: var(--text-dim); }
+.library-group h3 em { display: grid; place-items: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; font-size: 11px; font-style: normal; letter-spacing: 0; color: #111; background: #FFB794; }
 .library-list { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); list-style: none; margin: 0; padding: 0; }
 .library-card { display: flex; align-items: center; gap: 14px; transition: background .18s ease, border-color .18s ease; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--r-surface); background: var(--card); }
 .library-card:hover { border-color: rgba(255,122,69,.35); background: var(--card-hover); }

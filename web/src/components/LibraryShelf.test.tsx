@@ -180,3 +180,35 @@ describe('how far along each download is', () => {
     expect(document.querySelector('.library-poster')).toHaveAttribute('src', 'https://img.test/duna.jpg')
   })
 })
+
+// Quem acabou de por um filme na fila abre esta aba para ver aquele, e nao
+// para procura-lo no meio dos que ja estao prontos.
+describe('a fila e o que ja esta pronto', () => {
+  const GB2 = 1_073_741_824
+  const andando = { kept: 'kept' as const, progress: 0.3, haveBytes: GB2, totalBytes: 3 * GB2, downSpeed: 0, state: 'running' }
+  const pronto = { kept: 'kept' as const, progress: 1, haveBytes: GB2, totalBytes: GB2, downSpeed: 0, state: 'running' }
+
+  it('separa os dois, e conta quantos estao baixando', async () => {
+    localStorage.setItem('ss.library', JSON.stringify([
+      entry({ roomId: 'r1', jobId: 'j1', title: 'Baixando' }),
+      entry({ roomId: 'r2', jobId: 'j2', title: 'Pronto' }),
+    ]))
+    vi.mocked(jobProgress).mockImplementation(async (id: string) => (id === 'j1' ? andando : pronto))
+    shelf()
+
+    expect(await screen.findByText('library.queue')).toBeInTheDocument()
+    expect(screen.getByText('library.done')).toBeInTheDocument()
+    expect(document.querySelector('.library-group h3 em')).toHaveTextContent('1')
+  })
+
+  // Sem resposta do worker, o filme fica onde estava antes de existir fila:
+  // chutar "baixando" seria inventar.
+  it('nao chama de fila o que ainda nao respondeu', async () => {
+    localStorage.setItem('ss.library', JSON.stringify([entry()]))
+    vi.mocked(jobProgress).mockResolvedValue(null)
+    shelf()
+
+    await screen.findByText('library.checking')
+    expect(screen.queryByText('library.queue')).not.toBeInTheDocument()
+  })
+})

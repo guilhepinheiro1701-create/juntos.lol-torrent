@@ -20,6 +20,7 @@ e as buscas no catálogo.
 - torrent baixado pelo ss-worker desta instalação, com início progressivo: começa a tocar com os primeiros segmentos, sem esperar o download inteiro;
 - **escolha de disco** antes de baixar, entre os lugares que a instalação declara — a página manda um rótulo, nunca um caminho;
 - **baixar para assistir offline**: o arquivo fica no disco de verdade, sobrevive a reiniciar o worker, e a aba Baixados reabre sem internet nenhuma;
+- **download em segundo plano**: escolhe a fonte, põe na fila e continua navegando — quem baixa é o worker, com a página fechada ou não, e a aba Baixados mostra a fila com a porcentagem;
 - o vídeo de um arquivo local ou de uma url é preparado no próprio navegador: remux para HLS com [mediabunny](https://mediabunny.dev), sem nenhum byte de vídeo e nenhum ffmpeg no servidor;
 - os segmentos ficam numa pasta servida pelo próprio servidor — sem bucket, sem outra origem, sem senha;
 - player responsivo com tela cheia, controles que somem durante a reprodução e suporte a HLS nativo ou `hls.js`;

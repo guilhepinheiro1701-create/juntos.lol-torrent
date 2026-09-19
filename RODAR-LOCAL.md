@@ -169,7 +169,14 @@ a instalação não declarou é recusado.
 
 **Assistir** — aperta o play, escolhe a fonte, e o worker baixa numa janela que acompanha onde você está. Não ocupa o filme inteiro no disco, e o espaço volta depois.
 
-**Baixar** — o botão durante a exibição. O arquivo fica no disco de verdade: sobrevive a reiniciar o worker, e a aba **Baixados** reabre sem internet. Devolver o espaço é um clique na mesma tela.
+**Baixar em segundo plano** — o segundo botão na tela de começar. O filme vai
+para a fila e você fica onde estava: pode continuar procurando, ou assistir
+outra coisa enquanto ele baixa. A aba **Baixados** mostra a fila com a
+porcentagem de cada um. Pode até fechar o navegador — quem baixa é o worker,
+não a página.
+
+**Baixar** — o botão durante a exibição, para quando você já está assistindo e
+decide guardar. O arquivo fica no disco de verdade: sobrevive a reiniciar o worker, e a aba **Baixados** reabre sem internet. Devolver o espaço é um clique na mesma tela.
 
 Sem internet, a aba do catálogo diz isso e leva para os Baixados. O catálogo precisa de um serviço de metadados e dos addons; o que já está no disco não precisa de nenhum dos dois.
 

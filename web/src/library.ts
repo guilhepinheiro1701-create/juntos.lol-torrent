@@ -15,6 +15,11 @@ const KEY = 'ss.library'
 const LIMIT = 200
 
 export interface LibraryEntry {
+  /**
+   * A chave. Normalmente e a sala em que o filme foi aberto; num download de
+   * segundo plano nao ha sala nenhuma, e ela vale `q:<infohash>` ate o dia em
+   * que alguem apertar o play.
+   */
   roomId: string
   jobId: string
   fileName: string
@@ -58,9 +63,24 @@ export function libraryEntry(roomId: string): LibraryEntry | null {
   return read().find((entry) => entry.roomId === roomId) ?? null
 }
 
-/** Records a download, replacing any earlier record for the same room. */
+/**
+ * Grava um download, substituindo o registro anterior do mesmo filme.
+ *
+ * "O mesmo filme" e a sala OU o magnet: um filme posto na fila sem sala
+ * nenhuma e depois assistido ganharia duas linhas na aba Baixados, uma com a
+ * chave da fila e outra com a da sala, apontando para o mesmo arquivo.
+ */
 export function remember(entry: Omit<LibraryEntry, 'savedAt'>): void {
-  write([{ ...entry, savedAt: Date.now() }, ...read().filter((held) => held.roomId !== entry.roomId)])
+  const outros = read().filter((held) => (
+    held.roomId !== entry.roomId
+    && !(entry.magnet !== undefined && held.magnet === entry.magnet)
+  ))
+  write([{ ...entry, savedAt: Date.now() }, ...outros])
+}
+
+/** A chave de um download que ainda nao tem sala. */
+export function queueKey(infoHash: string): string {
+  return `q:${infoHash.toLowerCase()}`
 }
 
 export function forget(roomId: string): void {
