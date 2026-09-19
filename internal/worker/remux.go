@@ -1,0 +1,695 @@
+package worker
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/redis/go-redis/v9"
+
+	"github.com/giulianoo0/ss/internal/config"
+	"github.com/giulianoo0/ss/internal/remux"
+	"github.com/giulianoo0/ss/internal/room"
+)
+
+// The remote-remux orchestrator: one intention per room, one run at a time,
+// the claim held by the backend on the room's behalf. Seeks follow the room's
+// authoritative position; heartbeats carry run state back.
+
+var (
+	ErrRemuxUnavailable = errors.New("remux_unavailable")
+	ErrRemuxConflict    = errors.New("remux_conflict")
+	ErrRemuxDenied      = errors.New("remux_denied")
+	ErrRemuxRoomState   = errors.New("remux_room_state")
+)
+
+// RemuxRun is the durable record of a room's remote production.
+type RemuxRun struct {
+	RunID     string `json:"runId"`
+	RequestID string `json:"requestId"`
+	JobID     string `json:"jobId"`
+	SessionID string `json:"sessionId"`
+	WorkerID  string `json:"workerId"`
+	// Source is "" for a torrent file and "youtube" for a link; a YouTube
+	// run has no infohash, no lease, and needs no re-lease to restart.
+	Source          string    `json:"source,omitempty"`
+	URL             string    `json:"url,omitempty"`
+	Infohash        string    `json:"infohash"`
+	FileIndex       int       `json:"fileIndex"`
+	LeaseID         string    `json:"leaseId"`
+	Claim           string    `json:"claim"`
+	RoomID          string    `json:"roomId"`
+	MediaGeneration int       `json:"mediaGeneration"`
+	Region          int       `json:"region"`
+	StartMs         int64     `json:"startMs"`
+	State           string    `json:"state"`
+	ProducedMs      int64     `json:"producedMs"`
+	Restarts        int       `json:"restarts,omitempty"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+}
+
+func remuxRunKey(roomID string) string { return "room:" + roomID + ":remux" }
+
+// remuxRoomsKey indexes the rooms a worker is producing for, so a heartbeat
+// reaches their runs even when the torrent job never learned its room.
+func remuxRoomsKey(workerID string) string { return "worker:" + workerID + ":remux_rooms" }
+
+// RemuxOrchestrator drives remote runs. All state that must survive a
+// restart lives in Redis; the in-memory locks only serialize this process.
+type RemuxOrchestrator struct {
+	Service *Service
+	Store   *room.Store
+	Cfg     config.Config
+	Notify  func(roomID string)
+
+	mu      sync.Mutex
+	byRoom  map[string]*sync.Mutex
+	follows map[string]*followState
+	// followDebounce is how long after a dispatch a further position waits
+	// before it may replace the run; a test shortens it.
+	followDebounce time.Duration
+}
+
+// followState is one room's place in the debounce: when it last moved, and
+// the position still waiting for its turn, if any.
+type followState struct {
+	last    time.Time
+	pending *int64
+	timer   *time.Timer
+}
+
+func NewRemuxOrchestrator(service *Service, store *room.Store, cfg config.Config) *RemuxOrchestrator {
+	return &RemuxOrchestrator{
+		Service: service,
+		Store:   store,
+		Cfg:     cfg,
+		byRoom:  map[string]*sync.Mutex{},
+		follows: map[string]*followState{},
+
+		followDebounce: followDebounce,
+	}
+}
+
+func (o *RemuxOrchestrator) roomLock(roomID string) *sync.Mutex {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	lock, ok := o.byRoom[roomID]
+	if !ok {
+		lock = &sync.Mutex{}
+		o.byRoom[roomID] = lock
+	}
+	return lock
+}
+
+func (o *RemuxOrchestrator) rdb() *redis.Client { return o.Service.Registry.rdb }
+
+func (o *RemuxOrchestrator) saveRun(ctx context.Context, run *RemuxRun) error {
+	raw, err := json.Marshal(run)
+	if err != nil {
+		return err
+	}
+	ttl := time.Duration(o.Cfg.RoomTTLHours) * time.Hour
+	pipe := o.rdb().TxPipeline()
+	pipe.Set(ctx, remuxRunKey(run.RoomID), raw, ttl)
+	pipe.SAdd(ctx, remuxRoomsKey(run.WorkerID), run.RoomID)
+	pipe.Expire(ctx, remuxRoomsKey(run.WorkerID), ttl)
+	_, err = pipe.Exec(ctx)
+	return err
+}
+
+// LoadRun answers the room's remux record, nil when there is none.
+func (o *RemuxOrchestrator) LoadRun(ctx context.Context, roomID string) (*RemuxRun, error) {
+	raw, err := o.rdb().Get(ctx, remuxRunKey(roomID)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var run RemuxRun
+	if err := json.Unmarshal(raw, &run); err != nil {
+		return nil, err
+	}
+	return &run, nil
+}
+
+func (o *RemuxOrchestrator) deleteRun(ctx context.Context, roomID string) {
+	if run, err := o.LoadRun(ctx, roomID); err == nil && run != nil {
+		_ = o.rdb().SRem(ctx, remuxRoomsKey(run.WorkerID), roomID).Err()
+	}
+	_ = o.rdb().Del(ctx, remuxRunKey(roomID)).Err()
+}
+
+// capableWorker says whether this job's worker can take a remux run now.
+func (o *RemuxOrchestrator) capableWorker(workerID string) bool {
+	held, ok := o.Service.Registry.Get(workerID)
+	if !ok || !held.Healthy(time.Now()) {
+		return false
+	}
+	capability := held.Heartbeat.Remux
+	return capability.Compatible() && capability.ActiveRuns < capability.Slots
+}
+
+// Start reserves the room's producer claim and dispatches the first run.
+// Authorization is the room's ownerToken (bootstrap) or a connected
+// controller's capability; both require the session owning the torrent job.
+func (o *RemuxOrchestrator) Start(ctx context.Context, sessionID, jobID string, req remux.StartRequest,
+	authorizeMember func(memberID, capability string) bool) (*remux.StartResponse, error) {
+	job, err := o.Service.Get(ctx, sessionID, jobID)
+	if err != nil {
+		return nil, err
+	}
+	youtube := job.Kind == JobKindYoutube
+	if youtube {
+		if job.State != JobListed {
+			return nil, ErrNotListed
+		}
+	} else if job.State != JobServing || job.FileIndex == nil {
+		return nil, ErrNotListed
+	}
+	if job.RoomID != req.RoomID {
+		job.RoomID = req.RoomID
+		_ = o.Service.Registry.SaveJob(ctx, job, o.Service.JobTTL)
+	}
+	storedRoom, err := o.Store.Get(ctx, req.RoomID)
+	if errors.Is(err, room.ErrNotFound) {
+		return nil, ErrRemuxRoomState
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !storedRoom.ExpiresAt.After(time.Now()) || storedRoom.MediaGeneration != req.MediaGeneration ||
+		storedRoom.Status != "uploading" {
+		return nil, ErrRemuxRoomState
+	}
+	switch {
+	case req.Auth.OwnerToken != "":
+		if subtle.ConstantTimeCompare([]byte(req.Auth.OwnerToken), []byte(storedRoom.OwnerToken)) != 1 ||
+			storedRoom.OwnerToken == "" {
+			return nil, ErrRemuxDenied
+		}
+	case req.Auth.MemberID != "" && req.Auth.Capability != "":
+		if authorizeMember == nil || !authorizeMember(req.Auth.MemberID, req.Auth.Capability) ||
+			storedRoom.ControllerID != req.Auth.MemberID {
+			return nil, ErrRemuxDenied
+		}
+	default:
+		return nil, ErrRemuxDenied
+	}
+
+	lock := o.roomLock(req.RoomID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	if existing, err := o.LoadRun(ctx, req.RoomID); err == nil && existing != nil {
+		if existing.MediaGeneration == req.MediaGeneration && !remux.TerminalState(existing.State) {
+			return &remux.StartResponse{RunID: existing.RunID,
+				MediaGeneration: existing.MediaGeneration, State: existing.State}, nil
+		}
+		if existing.MediaGeneration != req.MediaGeneration {
+			o.deleteRun(ctx, req.RoomID)
+		} else if existing.RequestID == req.RequestID {
+			return &remux.StartResponse{RunID: existing.RunID,
+				MediaGeneration: existing.MediaGeneration, State: existing.State}, nil
+		}
+	}
+
+	if !o.capableWorker(job.WorkerID) {
+		return nil, ErrRemuxUnavailable
+	}
+	if youtube {
+		if held, ok := o.Service.Registry.Get(job.WorkerID); !ok || !held.Heartbeat.Remux.TakesYoutube() {
+			return nil, ErrRemuxUnavailable
+		}
+	}
+
+	secret := make([]byte, 16)
+	if _, err := rand.Read(secret); err != nil {
+		return nil, err
+	}
+	claim := "client:" + hex.EncodeToString(secret)
+	if err := o.Store.ReserveUpload(ctx, req.RoomID, claim, time.Now()); err != nil {
+		if errors.Is(err, room.ErrUploadReserved) {
+			return nil, ErrRemuxConflict
+		}
+		return nil, ErrRemuxRoomState
+	}
+
+	fileIndex := 0
+	if job.FileIndex != nil {
+		fileIndex = *job.FileIndex
+	}
+	run := &RemuxRun{
+		RunID:           "run_" + randomID(8),
+		RequestID:       req.RequestID,
+		JobID:           job.ID,
+		SessionID:       sessionID,
+		WorkerID:        job.WorkerID,
+		Source:          job.Kind,
+		URL:             job.URL,
+		Infohash:        job.Infohash,
+		FileIndex:       fileIndex,
+		LeaseID:         job.LeaseID,
+		Claim:           claim,
+		RoomID:          req.RoomID,
+		MediaGeneration: req.MediaGeneration,
+		Region:          0,
+		StartMs:         req.StartMs,
+		State:           remux.RunStarting,
+		UpdatedAt:       time.Now(),
+	}
+	if err := o.saveRun(ctx, run); err != nil {
+		_ = o.Store.ReleaseUpload(ctx, req.RoomID, claim)
+		return nil, err
+	}
+	if err := o.Store.SetProducerRun(ctx, req.RoomID, run.RunID); err != nil {
+		slog.WarnContext(ctx, "set producer run failed", "room_id", req.RoomID, "error", err)
+	}
+	if err := o.dispatchStart(ctx, run); err != nil {
+		o.deleteRun(ctx, req.RoomID)
+		_ = o.Store.ReleaseUpload(ctx, req.RoomID, claim)
+		return nil, err
+	}
+	run.State = remux.RunAccepted
+	run.UpdatedAt = time.Now()
+	_ = o.saveRun(ctx, run)
+	return &remux.StartResponse{RunID: run.RunID,
+		MediaGeneration: run.MediaGeneration, State: run.State}, nil
+}
+
+func (o *RemuxOrchestrator) dispatchStart(ctx context.Context, run *RemuxRun) error {
+	spec := remux.Spec{
+		ProtocolVersion: remux.ProtocolVersion,
+		RunID:           run.RunID,
+		Claim:           run.Claim,
+		MediaGeneration: run.MediaGeneration,
+		Region:          run.Region,
+		StartMs:         run.StartMs,
+		APIBase:         o.Cfg.RemoteRemuxAPIBase,
+		RoomID:          run.RoomID,
+		Limits: remux.Limits{
+			PutConcurrency: 4,
+		},
+	}
+	job := Job{
+		Kind:     "remuxStart",
+		JobID:    "rx_" + randomID(6),
+		WorkerID: run.WorkerID,
+		RoomID:   run.RoomID,
+		Remux:    spec,
+	}
+	if run.Source == JobKindYoutube {
+		job.Youtube = &YoutubeJob{URL: run.URL}
+	} else {
+		index := run.FileIndex
+		job.Infohash, job.FileIndex, job.LeaseID = run.Infohash, &index, run.LeaseID
+	}
+	result, err := o.Service.Hub.Dispatch(ctx, job, 60*time.Second)
+	if err != nil {
+		return fmt.Errorf("remux dispatch: %w", err)
+	}
+	if !result.OK {
+		return fmt.Errorf("remux refused: %s", result.Error)
+	}
+	return nil
+}
+
+func (o *RemuxOrchestrator) dispatchCancel(run *RemuxRun) {
+	_ = o.Service.Hub.Send(Job{
+		Kind:     "remuxCancel",
+		JobID:    "rc_" + randomID(6),
+		WorkerID: run.WorkerID,
+		Infohash: run.Infohash,
+		Remux:    map[string]string{"runId": run.RunID},
+	})
+}
+
+const followAheadMs = 45_000
+
+// followBehindMs must not exceed the player's REGION_BEHIND_MS
+// (web/src/player/Player.tsx): a position the server calls covered but the
+// player will not load from an existing region is a room that waits forever.
+const followBehindMs = 1_000
+const followDebounce = 3 * time.Second
+
+// Follow tracks the room's authoritative position. Covered positions do
+// nothing; an uncovered one replaces the run at the target — a completed run
+// included, since a region that reached the end of the file leaves every
+// earlier gap for the next seek to fill. Buffer reports never reach here —
+// only controller state changes do.
+//
+// A position that arrives inside the debounce window is held, not dropped:
+// the newest one is replayed when the window closes, so a second seek made
+// while the first is still being prepared lands where the room actually is.
+func (o *RemuxOrchestrator) Follow(roomID string, positionMs int64) {
+	if positionMs < 0 {
+		return
+	}
+	if !o.admitFollow(roomID, positionMs) {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	lock := o.roomLock(roomID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	run, err := o.LoadRun(ctx, roomID)
+	if err != nil || run == nil || (remux.TerminalState(run.State) && run.State != remux.RunCompleted) {
+		return
+	}
+	storedRoom, err := o.Store.Get(ctx, roomID)
+	if err != nil || !storedRoom.ExpiresAt.After(time.Now()) ||
+		storedRoom.MediaGeneration != run.MediaGeneration {
+		return
+	}
+	if coveredByRegions(storedRoom.MediaRegions, run, positionMs) {
+		return
+	}
+	replaced := *run
+	replaced.RunID = "run_" + randomID(8)
+	replaced.Region = highestRegion(storedRoom.MediaRegions, run.Region) + 1
+	replaced.StartMs = positionMs
+	replaced.State = remux.RunStarting
+	replaced.UpdatedAt = time.Now()
+	if err := o.Store.SetProducerRun(ctx, roomID, replaced.RunID); err != nil {
+		return
+	}
+	if err := o.saveRun(ctx, &replaced); err != nil {
+		return
+	}
+	if !remux.TerminalState(run.State) {
+		o.dispatchCancel(run)
+	}
+	startErr := o.dispatchStart(ctx, &replaced)
+	for tries := 0; startErr != nil && strings.Contains(startErr.Error(), "remux_busy") && tries < 3; tries++ {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
+		startErr = o.dispatchStart(ctx, &replaced)
+	}
+	if startErr != nil {
+		slog.Warn("remux follow dispatch failed", "room_id", roomID, "error", startErr)
+		replaced.State = remux.RunFailed
+		replaced.UpdatedAt = time.Now()
+		_ = o.saveRun(ctx, &replaced)
+	} else {
+		replaced.State = remux.RunAccepted
+		replaced.UpdatedAt = time.Now()
+		_ = o.saveRun(ctx, &replaced)
+	}
+}
+
+// admitFollow says whether this position may act now. Inside the debounce
+// window it is parked as the room's pending position and a timer replays the
+// latest pending one once the window closes.
+func (o *RemuxOrchestrator) admitFollow(roomID string, positionMs int64) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	state, ok := o.follows[roomID]
+	if !ok {
+		state = &followState{}
+		o.follows[roomID] = state
+	}
+	if since := time.Since(state.last); since < o.followDebounce {
+		position := positionMs
+		state.pending = &position
+		if state.timer == nil {
+			state.timer = time.AfterFunc(o.followDebounce-since, func() {
+				o.mu.Lock()
+				state.timer = nil
+				pending := state.pending
+				state.pending = nil
+				o.mu.Unlock()
+				if pending != nil {
+					o.Follow(roomID, *pending)
+				}
+			})
+		}
+		return false
+	}
+	state.last = time.Now()
+	state.pending = nil
+	return true
+}
+
+func coveredByRegions(regions []room.MediaRegion, run *RemuxRun, positionMs int64) bool {
+	for _, region := range regions {
+		end := region.StartMs + region.ProducedMs
+		forward := end
+		if region.Growing || (region.N == run.Region && !remux.TerminalState(run.State)) {
+			forward = maxInt64(end, run.StartMs+run.ProducedMs) + followAheadMs
+		}
+		if positionMs >= region.StartMs-followBehindMs && positionMs <= forward {
+			return true
+		}
+	}
+	if len(regions) == 0 || run.State == remux.RunStarting || run.State == remux.RunAccepted {
+		aim := run.StartMs
+		if positionMs >= aim-followBehindMs && positionMs <= aim+run.ProducedMs+followAheadMs {
+			return true
+		}
+	}
+	return false
+}
+
+func highestRegion(regions []room.MediaRegion, floor int) int {
+	top := floor
+	for _, region := range regions {
+		if region.N > top {
+			top = region.N
+		}
+	}
+	return top
+}
+
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// CancelRoom ends the room's remote production: source swap, reclaim, or
+// the room dying. The claim goes with it.
+func (o *RemuxOrchestrator) CancelRoom(roomID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	lock := o.roomLock(roomID)
+	lock.Lock()
+	defer lock.Unlock()
+	run, err := o.LoadRun(ctx, roomID)
+	if err != nil || run == nil {
+		return
+	}
+	o.dispatchCancel(run)
+	_ = o.Store.ReleaseUpload(ctx, roomID, run.Claim)
+	o.deleteRun(ctx, roomID)
+}
+
+// ObserveHeartbeat digests a worker's remux block: run states move the
+// records, live runs renew the lease and the claim, and terminal runs
+// settle the room.
+func (o *RemuxOrchestrator) ObserveHeartbeat(workerID string, hb Heartbeat) {
+	if hb.Remux == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ids, _ := o.Service.Registry.JobsForWorker(ctx, workerID)
+	rooms := map[string]struct{}{}
+	for _, id := range ids {
+		job, err := o.Service.Registry.LoadJob(ctx, id)
+		if err != nil || job == nil || job.RoomID == "" {
+			continue
+		}
+		rooms[job.RoomID] = struct{}{}
+	}
+	if indexed, err := o.rdb().SMembers(ctx, remuxRoomsKey(workerID)).Result(); err == nil {
+		for _, roomID := range indexed {
+			rooms[roomID] = struct{}{}
+		}
+	}
+	for roomID := range rooms {
+		run, err := o.LoadRun(ctx, roomID)
+		if err != nil || run == nil || run.WorkerID != workerID {
+			continue
+		}
+		report := findRun(hb.Remux.Runs, run.RunID)
+		if report == nil {
+			if !remux.TerminalState(run.State) && time.Since(run.UpdatedAt) > 45*time.Second {
+				o.applyReport(ctx, run, &remux.RunReport{
+					RunID: run.RunID, State: remux.RunFailed, Error: runLostError,
+				})
+			}
+			continue
+		}
+		o.applyReport(ctx, run, report)
+	}
+}
+
+const runLostError = "run lost by the worker"
+
+const maxRunRestarts = 2
+
+// restartLostRun redispatches a production its worker lost or gave up on,
+// resuming at the produced edge of the run's own region. False hands the
+// failure back to the ordinary path. Caller holds the room lock.
+func (o *RemuxOrchestrator) restartLostRun(parent context.Context, lost *RemuxRun) bool {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Minute)
+	defer cancel()
+	storedRoom, err := o.Store.Get(ctx, lost.RoomID)
+	if err != nil || !storedRoom.ExpiresAt.After(time.Now()) ||
+		storedRoom.MediaGeneration != lost.MediaGeneration {
+		return false
+	}
+	replaced := *lost
+	replaced.RunID = "run_" + randomID(8)
+	replaced.Restarts = lost.Restarts + 1
+	replaced.State = remux.RunStarting
+	replaced.ProducedMs = 0
+	replaced.UpdatedAt = time.Now()
+	for _, region := range storedRoom.MediaRegions {
+		if region.N == lost.Region && region.ProducedMs > 0 {
+			replaced.Region = highestRegion(storedRoom.MediaRegions, lost.Region) + 1
+			replaced.StartMs = region.StartMs + region.ProducedMs
+			break
+		}
+	}
+	if lost.Source != JobKindYoutube {
+		if result, err := o.Service.Hub.Dispatch(ctx, Job{
+			Kind: "lease", JobID: "rl_" + randomID(6), WorkerID: lost.WorkerID,
+			Infohash: lost.Infohash, LeaseID: lost.LeaseID,
+		}, 3*time.Minute); err != nil || !result.OK {
+			slog.Warn("lost run re-lease failed", "room_id", lost.RoomID, "error", err)
+			return false
+		}
+		index := lost.FileIndex
+		if result, err := o.Service.Hub.Dispatch(ctx, Job{
+			Kind: "select", JobID: "rs_" + randomID(6), WorkerID: lost.WorkerID,
+			Infohash: lost.Infohash, FileIndex: &index, RoomID: lost.RoomID,
+		}, 60*time.Second); err != nil || !result.OK {
+			slog.Warn("lost run re-select failed", "room_id", lost.RoomID, "error", err)
+			return false
+		}
+	}
+	if err := o.Store.SetProducerRun(ctx, lost.RoomID, replaced.RunID); err != nil {
+		return false
+	}
+	if err := o.saveRun(ctx, &replaced); err != nil {
+		return false
+	}
+	if err := o.dispatchStart(ctx, &replaced); err != nil {
+		slog.Warn("lost run redispatch failed", "room_id", lost.RoomID, "error", err)
+		replaced.State = remux.RunFailed
+		replaced.UpdatedAt = time.Now()
+		_ = o.saveRun(ctx, &replaced)
+		return false
+	}
+	slog.Info("lost run redispatched", "room_id", lost.RoomID, "run", replaced.RunID,
+		"region", replaced.Region, "start_ms", replaced.StartMs, "restart", replaced.Restarts)
+	replaced.State = remux.RunAccepted
+	replaced.UpdatedAt = time.Now()
+	_ = o.saveRun(ctx, &replaced)
+	return true
+}
+
+// failRoom gives the room's upload back and surfaces the failure to the host.
+func (o *RemuxOrchestrator) failRoom(ctx context.Context, run *RemuxRun) {
+	_ = o.Store.ReleaseUpload(ctx, run.RoomID, run.Claim)
+	if storedRoom, err := o.Store.Get(ctx, run.RoomID); err == nil && storedRoom.Status == "uploading" {
+		_ = o.Store.SetError(ctx, run.RoomID, "remote remux failed")
+	}
+	run.State = remux.RunFailed
+	run.UpdatedAt = time.Now()
+	_ = o.saveRun(ctx, run)
+}
+
+func findRun(runs []remux.RunReport, runID string) *remux.RunReport {
+	for i := range runs {
+		if runs[i].RunID == runID {
+			return &runs[i]
+		}
+	}
+	return nil
+}
+
+func (o *RemuxOrchestrator) applyReport(ctx context.Context, run *RemuxRun, report *remux.RunReport) {
+	lock := o.roomLock(run.RoomID)
+	lock.Lock()
+	defer lock.Unlock()
+	current, err := o.LoadRun(ctx, run.RoomID)
+	if err != nil || current == nil || current.RunID != run.RunID {
+		return
+	}
+	current.State = report.State
+	current.ProducedMs = report.ProducedMs
+	current.UpdatedAt = time.Now()
+	switch report.State {
+	case remux.RunCompleted:
+		_ = o.saveRun(ctx, current)
+		if current.StartMs == 0 {
+			if job, err := o.Service.Registry.LoadJob(ctx, current.JobID); err == nil && job != nil {
+				o.Service.release(ctx, job)
+			}
+			if storedRoom, err := o.Store.Get(ctx, run.RoomID); err == nil {
+				size := storedRoom.Preparation.SourceBytes
+				_ = o.Store.SetSwarm(ctx, run.RoomID, room.SwarmStats{
+					HaveBytes: size, SelectedBytes: size,
+				})
+				if current.ProducedMs > 0 && current.ProducedMs < storedRoom.DurationMs {
+					slog.Info("covering run ended short of the container duration; clamping",
+						"room_id", run.RoomID, "produced_ms", current.ProducedMs, "duration_ms", storedRoom.DurationMs)
+					_ = o.Store.SetMediaDuration(ctx, run.RoomID, current.ProducedMs)
+				}
+				if o.Notify != nil {
+					o.Notify(run.RoomID)
+				}
+			}
+		}
+	case remux.RunFailed:
+		slog.Warn("remote remux failed", "room_id", run.RoomID, "run", run.RunID, "error", report.Error,
+			"restarts", current.Restarts)
+		if current.Restarts < maxRunRestarts {
+			_ = o.saveRun(ctx, current)
+			restart := *current
+			go func() {
+				lock := o.roomLock(restart.RoomID)
+				lock.Lock()
+				defer lock.Unlock()
+				bg := context.Background()
+				latest, err := o.LoadRun(bg, restart.RoomID)
+				if err != nil || latest == nil || latest.RunID != restart.RunID {
+					return
+				}
+				if !o.restartLostRun(bg, &restart) {
+					o.failRoom(bg, &restart)
+				}
+			}()
+			return
+		}
+		o.failRoom(ctx, current)
+	default:
+		_ = o.saveRun(ctx, current)
+		_ = o.Store.TouchClientClaim(ctx, run.RoomID)
+		if job, err := o.Service.Registry.LoadJob(ctx, run.JobID); err == nil && job != nil {
+			job.LastSeenAt = time.Now()
+			_ = o.Service.Registry.SaveJob(ctx, job, o.Service.JobTTL)
+			if job.Kind != JobKindYoutube {
+				_ = o.Service.Hub.Send(Job{Kind: "renew", JobID: "n_" + randomID(6),
+					WorkerID: job.WorkerID, Infohash: job.Infohash, LeaseID: job.LeaseID})
+			}
+		}
+	}
+}

@@ -1,0 +1,43 @@
+# Go
+/bin/
+*.test
+*.out
+
+# Node / frontend
+node_modules/
+dist/
+*.local
+
+# Dados efêmeros das salas
+/data/
+
+# Env e segredos locais
+.env
+.env.*
+
+# OS
+.DS_Store
+
+# Worktrees created by the agent harness
+/.claude/worktrees/
+/.worktrees/
+
+# Built from the ss-docs repository and rsynced to the VPS; never versioned here.
+web-docs/*
+!web-docs/.gitkeep
+
+# Compose override local (o de produção vive só na VPS)
+docker-compose.override.yml
+
+# Worktrees do agente
+/.worktrees/
+
+# ss-worker build output
+/ss-worker/target/
+ss-worker/ss-remux/Cargo.lock
+web/dev/*.png
+/ss-worker/ss-remux/target/
+
+# Artefatos de build do Rust: o upstream os commitou por engano (3.597
+# arquivos, 1,2 GB de historico). Esta branch comeca sem eles.
+target/

@@ -1,0 +1,779 @@
+package worker
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"github.com/giulianoo0/ss/internal/remux"
+	"log/slog"
+	"strings"
+	"time"
+)
+
+// Service is what the HTTP layer and the room lifecycle call: the debrid
+// state machine — register by infohash, list, select, get bytes — with the
+// fleet behind it.
+type Service struct {
+	Registry  *Registry
+	Hub       *Hub
+	Signer    *Signer
+	Blocklist *Blocklist
+	Quota     QuotaCharger
+	TicketTTL time.Duration
+	JobTTL    time.Duration
+	OnSwarm   func(roomID string, stats SwarmStats)
+	// OnLive hears every live state a worker reports, with the worker it came
+	// from so the room can tell its own producer from a stale one.
+	OnLive    func(roomID, workerID string, state remux.LiveState)
+	RelayBase string
+}
+
+// QuotaCharger is the slice of the quota the service needs.
+type QuotaCharger interface {
+	AcquireJob(ctx context.Context, sid, jobID string, ttl time.Duration) (bool, error)
+	ReleaseJob(ctx context.Context, sid, jobID string) error
+	AddBytes(ctx context.Context, sid string, n int64) error
+}
+
+var (
+	ErrBlocked     = errors.New("blocked")
+	ErrQuotaJobs   = errors.New("concurrent_jobs")
+	ErrJobNotFound = errors.New("job_not_found")
+	ErrNotYours    = errors.New("not_your_job")
+	ErrNotListed   = errors.New("not_listed")
+	ErrDisabled    = errors.New("no_workers")
+)
+
+// WorkerError carries a worker's own rejection code.
+type WorkerError struct {
+	Code   string
+	Detail string
+}
+
+func (e *WorkerError) Error() string { return e.Code + ": " + e.Detail }
+
+// Capacity is what the UI reads to enable or disable the magnet path.
+func (s *Service) Capacity() string {
+	if s.Hub == nil || !s.Hub.Enabled() {
+		return "disabled"
+	}
+	now := time.Now()
+	any, room := false, false
+	for _, w := range s.Registry.Snapshot() {
+		if !w.Healthy(now) {
+			continue
+		}
+		any = true
+		if hasRoom(w, 0) {
+			room = true
+		}
+	}
+	switch {
+	case room:
+		return "available"
+	case any:
+		return "busy"
+	default:
+		return "no_workers"
+	}
+}
+
+// ProbeTarget is one worker the page may measure before choosing.
+type ProbeTarget struct {
+	ID       string `json:"id"`
+	ReadBase string `json:"readBase"`
+	Probe    string `json:"probe"`
+	Holds    bool   `json:"holds"`
+}
+
+// ProbeList hands the page every healthy worker with a short-lived probe
+// ticket each, so it can measure reachability itself: the server cannot know
+// which worker is fast from THIS browser.
+func (s *Service) ProbeList(infohash, audience string) []ProbeTarget {
+	now := time.Now()
+	var out []ProbeTarget
+	for _, w := range s.Registry.Snapshot() {
+		if !w.Healthy(now) {
+			continue
+		}
+		ticket, err := s.Signer.MintTicket(Ticket{
+			RoomID:   "probe",
+			Infohash: strings.Repeat("0", 40),
+			Audience: audience,
+			WorkerID: w.ID,
+			Exp:      now.Add(90 * time.Second).Unix(),
+		})
+		if err != nil {
+			continue
+		}
+		_, holds := w.Holds(infohash)
+		base := w.EffectiveBase(s.RelayBase)
+		out = append(out, ProbeTarget{ID: w.ID, ReadBase: base, Probe: base + "/v1/probe/" + ticket, Holds: holds})
+	}
+	return out
+}
+
+// Start registers an infohash for a session: blocklist, quota, placement,
+// then the lease job in the background; the listing arrives through Get.
+// `preferred` is the page's own ranking from its probes and wins when it fits.
+func (s *Service) Start(ctx context.Context, sessionID, infohash, name string, trackers, preferred []string) (*JobRecord, error) {
+	if s.Blocklist.Rejects(infohash, name) {
+		return nil, ErrBlocked
+	}
+	if s.Hub == nil || !s.Hub.Enabled() {
+		return nil, ErrDisabled
+	}
+	worker, err := s.Registry.Place(infohash, 0, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now()
+	for _, id := range preferred {
+		candidate, ok := s.Registry.Get(id)
+		if ok && candidate.Healthy(now) && hasRoom(candidate, 0) {
+			worker = candidate
+			break
+		}
+	}
+	job := &JobRecord{
+		ID:         "j_" + randomID(8),
+		SessionID:  sessionID,
+		Infohash:   infohash,
+		WorkerID:   worker.ID,
+		LeaseID:    "l_" + randomID(8),
+		State:      JobResolving,
+		CreatedAt:  time.Now(),
+		LastSeenAt: time.Now(),
+	}
+	if s.Quota != nil {
+		ok, err := s.Quota.AcquireJob(ctx, sessionID, job.ID, s.JobTTL)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, ErrQuotaJobs
+		}
+	}
+	if err := s.Registry.SaveJob(ctx, job, s.JobTTL); err != nil {
+		if s.Quota != nil {
+			_ = s.Quota.ReleaseJob(ctx, sessionID, job.ID)
+		}
+		return nil, err
+	}
+	go s.resolve(*job, trackers)
+	return job, nil
+}
+
+func (s *Service) resolve(job JobRecord, trackers []string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	result, err := s.Hub.Dispatch(ctx, Job{
+		Kind:     "lease",
+		JobID:    job.ID,
+		WorkerID: job.WorkerID,
+		Infohash: job.Infohash,
+		LeaseID:  job.LeaseID,
+		Trackers: trackers,
+	}, 3*time.Minute)
+	current, loadErr := s.Registry.LoadJob(ctx, job.ID)
+	if loadErr != nil || current == nil {
+		return
+	}
+	switch {
+	case err != nil:
+		current.State, current.Error = JobFailed, mapDispatchError(err)
+		_ = s.Hub.Send(Job{Kind: "release", JobID: "r_" + randomID(6), WorkerID: job.WorkerID, Infohash: job.Infohash, LeaseID: job.LeaseID})
+	case !result.OK:
+		current.State, current.Error = JobFailed, result.Error
+		if result.Detail != "" {
+			slog.Info("worker refused lease", "job", job.ID, "code", result.Error, "detail", result.Detail)
+		}
+	default:
+		if s.Blocklist.Rejects(current.Infohash, result.Name) {
+			current.State, current.Error = JobFailed, ErrBlocked.Error()
+			_ = s.Hub.Send(Job{Kind: "release", JobID: "r_" + randomID(6), WorkerID: job.WorkerID, Infohash: job.Infohash, LeaseID: job.LeaseID})
+		} else {
+			current.State, current.Name, current.Files = JobListed, result.Name, result.Files
+		}
+	}
+	if current.State == JobFailed && s.Quota != nil {
+		_ = s.Quota.ReleaseJob(ctx, current.SessionID, current.ID)
+	}
+	_ = s.Registry.SaveJob(ctx, current, s.JobTTL)
+}
+
+const JobKindYoutube = "youtube"
+
+var ErrNoYoutube = errors.New("no_youtube")
+
+// ErrNoLive says no healthy worker has a live slot at all.
+var ErrNoLive = errors.New("no_live")
+
+// JobKindLive is a live a worker keeps on the relay for a room.
+const JobKindLive = "live"
+
+// YoutubeCapacity says whether a link can be resolved right now: a healthy
+// worker with yt-dlp and a free remux slot.
+func (s *Service) YoutubeCapacity() string {
+	if s.Hub == nil || !s.Hub.Enabled() {
+		return "disabled"
+	}
+	now := time.Now()
+	any, free := false, false
+	for _, w := range s.Registry.Snapshot() {
+		if !w.Healthy(now) || !w.Heartbeat.Remux.TakesYoutube() {
+			continue
+		}
+		any = true
+		if w.Heartbeat.Remux.ActiveRuns < w.Heartbeat.Remux.Slots {
+			free = true
+		}
+	}
+	switch {
+	case free:
+		return "available"
+	case any:
+		return "busy"
+	default:
+		return "no_workers"
+	}
+}
+
+// placeYoutube picks the worker with the most remux room among those that
+// resolve links.
+func (s *Service) placeYoutube(now time.Time) (Worker, error) {
+	var best *Worker
+	bestFree := -1
+	seen := false
+	for _, w := range s.Registry.Snapshot() {
+		if !w.Healthy(now) || !w.Heartbeat.Remux.TakesYoutube() {
+			continue
+		}
+		seen = true
+		free := w.Heartbeat.Remux.Slots - w.Heartbeat.Remux.ActiveRuns
+		if free <= 0 {
+			continue
+		}
+		if best == nil || free > bestFree {
+			candidate := w
+			best, bestFree = &candidate, free
+		}
+	}
+	switch {
+	case best != nil:
+		return *best, nil
+	case seen:
+		return Worker{}, ErrWorkersBusy
+	default:
+		return Worker{}, ErrNoYoutube
+	}
+}
+
+// StartYoutube registers a link for a session: quota, placement, then the
+// resolve job in the background; the summary arrives through Get.
+func (s *Service) StartYoutube(ctx context.Context, sessionID, url string) (*JobRecord, error) {
+	if s.Hub == nil || !s.Hub.Enabled() {
+		return nil, ErrDisabled
+	}
+	worker, err := s.placeYoutube(time.Now())
+	if err != nil {
+		return nil, err
+	}
+	job := &JobRecord{
+		ID:         "y_" + randomID(8),
+		SessionID:  sessionID,
+		Kind:       JobKindYoutube,
+		URL:        url,
+		WorkerID:   worker.ID,
+		State:      JobResolving,
+		CreatedAt:  time.Now(),
+		LastSeenAt: time.Now(),
+	}
+	if s.Quota != nil {
+		ok, err := s.Quota.AcquireJob(ctx, sessionID, job.ID, s.JobTTL)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, ErrQuotaJobs
+		}
+	}
+	if err := s.Registry.SaveJob(ctx, job, s.JobTTL); err != nil {
+		if s.Quota != nil {
+			_ = s.Quota.ReleaseJob(ctx, sessionID, job.ID)
+		}
+		return nil, err
+	}
+	go s.resolveYoutube(*job)
+	return job, nil
+}
+
+func (s *Service) resolveYoutube(job JobRecord) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	result, err := s.Hub.Dispatch(ctx, Job{
+		Kind:     "ytResolve",
+		JobID:    job.ID,
+		WorkerID: job.WorkerID,
+		Youtube:  &YoutubeJob{URL: job.URL},
+	}, 2*time.Minute)
+	current, loadErr := s.Registry.LoadJob(ctx, job.ID)
+	if loadErr != nil || current == nil {
+		return
+	}
+	switch {
+	case err != nil:
+		current.State, current.Error = JobFailed, mapDispatchError(err)
+	case !result.OK:
+		current.State, current.Error = JobFailed, result.Error
+		slog.Info("worker refused youtube link", "job", job.ID, "code", result.Error, "detail", result.Detail)
+	case len(result.Summary) == 0:
+		current.State, current.Error = JobFailed, "youtube_tool"
+	default:
+		current.State, current.Summary = JobListed, result.Summary
+	}
+	if current.State == JobFailed && s.Quota != nil {
+		_ = s.Quota.ReleaseJob(ctx, current.SessionID, current.ID)
+	}
+	_ = s.Registry.SaveJob(ctx, current, s.JobTTL)
+}
+
+func mapDispatchError(err error) string {
+	switch {
+	case errors.Is(err, ErrWorkerGone):
+		return "worker_gone"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "worker_timeout"
+	default:
+		return err.Error()
+	}
+}
+
+// Get answers a job the session owns. Polling is a sign of life: a job
+// still being watched is not idle.
+func (s *Service) Get(ctx context.Context, sessionID, jobID string) (*JobRecord, error) {
+	job, err := s.Registry.LoadJob(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if job == nil {
+		return nil, ErrJobNotFound
+	}
+	if job.SessionID != sessionID {
+		return nil, ErrNotYours
+	}
+	if time.Since(job.LastSeenAt) > 30*time.Second {
+		job.LastSeenAt = time.Now()
+		_ = s.Registry.SaveJob(ctx, job, s.JobTTL)
+	}
+	return job, nil
+}
+
+// SwarmStats is the slice of a heartbeat a viewer cares about.
+type SwarmStats struct {
+	Peers         int64  `json:"peers"`
+	DownSpeed     int64  `json:"downSpeed"`
+	HaveBytes     int64  `json:"haveBytes"`
+	SelectedBytes int64  `json:"selectedBytes"`
+	DiskBytes     int64  `json:"diskBytes"`
+	Phase         string `json:"phase,omitempty"`
+}
+
+// Swarm answers the job's torrent as its worker last reported it.
+func (s *Service) Swarm(job *JobRecord) *SwarmStats {
+	d, ok := s.Registry.Digest(job.WorkerID, job.Infohash)
+	if !ok {
+		return nil
+	}
+	return &SwarmStats{Peers: d.Peers, DownSpeed: d.DownSpeed, HaveBytes: d.HaveBytes, SelectedBytes: d.SelectedBytes, DiskBytes: d.DiskBytes, Phase: d.Phase}
+}
+
+// Grant is what a selected file can be read with.
+type Grant struct {
+	ReadBase  string    `json:"readBase"`
+	Ticket    string    `json:"ticket"`
+	ExpiresAt time.Time `json:"expiresAt"`
+	Name      string    `json:"name"`
+	Size      int64     `json:"size"`
+	FileIndex int       `json:"fileIndex"`
+}
+
+// Select makes the worker download one file and mints the first ticket.
+func (s *Service) Select(ctx context.Context, sessionID, jobID string, fileIndex int, roomID, audience string) (*Grant, error) {
+	job, err := s.Get(ctx, sessionID, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if job.State != JobListed && job.State != JobServing && job.State != JobSelecting {
+		return nil, ErrNotListed
+	}
+	var file *FileEntry
+	for i := range job.Files {
+		if job.Files[i].Index == fileIndex {
+			file = &job.Files[i]
+		}
+	}
+	if file == nil {
+		return nil, &WorkerError{Code: "no_such_file", Detail: fmt.Sprintf("index %d", fileIndex)}
+	}
+	job.State, job.FileIndex, job.RoomID, job.Audience, job.LastSeenAt = JobSelecting, &fileIndex, roomID, audience, time.Now()
+	_ = s.Registry.SaveJob(ctx, job, s.JobTTL)
+	result, err := s.Hub.Dispatch(ctx, Job{
+		Kind:      "select",
+		JobID:     "s_" + randomID(6),
+		WorkerID:  job.WorkerID,
+		Infohash:  job.Infohash,
+		FileIndex: &fileIndex,
+		RoomID:    roomID,
+	}, 60*time.Second)
+	if err != nil {
+		job.State, job.Error = JobListed, mapDispatchError(err)
+		_ = s.Registry.SaveJob(ctx, job, s.JobTTL)
+		return nil, &WorkerError{Code: job.Error, Detail: err.Error()}
+	}
+	if !result.OK {
+		job.State, job.Error = JobListed, result.Error
+		_ = s.Registry.SaveJob(ctx, job, s.JobTTL)
+		return nil, &WorkerError{Code: result.Error, Detail: result.Detail}
+	}
+	job.State = JobServing
+	_ = s.Registry.SaveJob(ctx, job, s.JobTTL)
+	return s.grant(job, file)
+}
+
+func (s *Service) grant(job *JobRecord, file *FileEntry) (*Grant, error) {
+	worker, ok := s.Registry.Get(job.WorkerID)
+	if !ok {
+		return nil, ErrWorkerGone
+	}
+	exp := time.Now().Add(s.TicketTTL)
+	ticket, err := s.Signer.MintTicket(Ticket{
+		RoomID:    job.RoomID,
+		Infohash:  job.Infohash,
+		FileIndex: file.Index,
+		Audience:  job.Audience,
+		WorkerID:  job.WorkerID,
+		Exp:       exp.Unix(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &Grant{ReadBase: worker.EffectiveBase(s.RelayBase), Ticket: ticket, ExpiresAt: exp, Name: file.Name, Size: file.Size, FileIndex: file.Index}, nil
+}
+
+// Token renews the ticket of a serving job and tells the worker the lease is
+// still wanted. The first renewal also names the room the job feeds, which is
+// what lets a source swap or the room's end release it.
+func (s *Service) Token(ctx context.Context, sessionID, jobID, roomID string) (*Grant, error) {
+	job, err := s.Get(ctx, sessionID, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if job.State != JobServing || job.FileIndex == nil {
+		return nil, ErrNotListed
+	}
+	if roomID != "" && job.RoomID != roomID {
+		job.RoomID = roomID
+	}
+	var file *FileEntry
+	for i := range job.Files {
+		if job.Files[i].Index == *job.FileIndex {
+			file = &job.Files[i]
+		}
+	}
+	if file == nil {
+		return nil, ErrNotListed
+	}
+	job.LastSeenAt = time.Now()
+	_ = s.Registry.SaveJob(ctx, job, s.JobTTL)
+	_ = s.Hub.Send(Job{Kind: "renew", JobID: "n_" + randomID(6), WorkerID: job.WorkerID, Infohash: job.Infohash, LeaseID: job.LeaseID})
+	return s.grant(job, file)
+}
+
+// Release ends a job: the worker drops the lease, the session gets its slot back.
+func (s *Service) Release(ctx context.Context, sessionID, jobID string) error {
+	job, err := s.Get(ctx, sessionID, jobID)
+	if err != nil {
+		return err
+	}
+	s.release(ctx, job)
+	return nil
+}
+
+func (s *Service) release(ctx context.Context, job *JobRecord) {
+	if job.Kind == JobKindLive {
+		_ = s.Hub.Send(Job{Kind: "liveStop", JobID: "s_" + randomID(6), WorkerID: job.WorkerID, RoomID: job.RoomID})
+	} else if job.Kind != JobKindYoutube {
+		_ = s.Hub.Send(Job{Kind: "release", JobID: "r_" + randomID(6), WorkerID: job.WorkerID, Infohash: job.Infohash, LeaseID: job.LeaseID})
+	}
+	if s.Quota != nil {
+		_ = s.Quota.ReleaseJob(ctx, job.SessionID, job.ID)
+	}
+	_ = s.Registry.DeleteJob(ctx, job)
+}
+
+// CancelRoom releases every job a room holds: the source was swapped or the
+// room died.
+func (s *Service) CancelRoom(roomID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ids, err := s.Registry.JobsForRoom(ctx, roomID)
+	if err != nil {
+		return
+	}
+	for _, id := range ids {
+		job, err := s.Registry.LoadJob(ctx, id)
+		if err != nil || job == nil {
+			continue
+		}
+		s.release(ctx, job)
+	}
+}
+
+// Sweep releases jobs nobody renewed within idle, and fails jobs whose
+// worker has gone quiet.
+func (s *Service) Sweep(ctx context.Context, idle time.Duration) {
+	ids, err := s.Registry.AllJobs(ctx)
+	if err != nil {
+		return
+	}
+	now := time.Now()
+	for _, id := range ids {
+		job, err := s.Registry.LoadJob(ctx, id)
+		if err != nil {
+			continue
+		}
+		if job == nil {
+			_ = s.Registry.DeleteJob(ctx, &JobRecord{ID: id})
+			continue
+		}
+		if now.Sub(job.LastSeenAt) > idle || (job.State == JobFailed && now.Sub(job.LastSeenAt) > 10*time.Minute) {
+			slog.Info("worker job idle, releasing", "job", id, "room", job.RoomID, "state", job.State)
+			s.release(ctx, job)
+			continue
+		}
+		if w, ok := s.Registry.Get(job.WorkerID); (!ok || now.Sub(w.LastSeen) > 2*time.Minute) && job.State != JobFailed {
+			job.State, job.Error = JobFailed, "worker_gone"
+			if job.Kind == JobKindLive && s.OnLive != nil {
+				s.OnLive(job.RoomID, job.WorkerID, remux.LiveState{State: "failed", Code: "worker_gone"})
+			}
+			_ = s.Registry.SaveJob(ctx, job, s.JobTTL)
+			if s.Quota != nil {
+				_ = s.Quota.ReleaseJob(ctx, job.SessionID, job.ID)
+			}
+		}
+	}
+}
+
+// Charge accounts a heartbeat's per-torrent growth to the session whose job
+// sits on that torrent — the only byte signal there is. Growth is charged once
+// per torrent per worker, never past the selected file's size.
+func (s *Service) Charge(workerID string, hb Heartbeat) {
+	if s.Quota == nil && s.OnSwarm == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ids, err := s.Registry.JobsForWorker(ctx, workerID)
+	if err != nil {
+		return
+	}
+	jobs := make([]*JobRecord, 0, len(ids))
+	for _, id := range ids {
+		job, err := s.Registry.LoadJob(ctx, id)
+		if err != nil || job == nil {
+			continue
+		}
+		jobs = append(jobs, job)
+	}
+	if s.OnSwarm != nil {
+		for _, job := range jobs {
+			if job.RoomID == "" || job.State != JobServing {
+				continue
+			}
+			if t, ok := findDigest(hb.Torrents, job.Infohash); ok {
+				s.OnSwarm(job.RoomID, SwarmStats{Peers: t.Peers, DownSpeed: t.DownSpeed, HaveBytes: t.HaveBytes, SelectedBytes: t.SelectedBytes, DiskBytes: t.DiskBytes})
+			}
+		}
+	}
+	for _, t := range hb.Torrents {
+		delta := s.Registry.ChargeMark(ctx, workerID, t.Infohash, t.HaveBytes)
+		if delta <= 0 {
+			continue
+		}
+		var owner *JobRecord
+		for _, job := range jobs {
+			if job.Infohash == t.Infohash && (owner == nil || job.CreatedAt.Before(owner.CreatedAt)) {
+				owner = job
+			}
+		}
+		if owner == nil {
+			continue
+		}
+		if size := selectedSize(owner); size > 0 && delta > size {
+			delta = size
+		}
+		if s.Quota != nil {
+			_ = s.Quota.AddBytes(ctx, owner.SessionID, delta)
+		}
+	}
+}
+
+func findDigest(torrents []TorrentDigest, infohash string) (TorrentDigest, bool) {
+	for _, t := range torrents {
+		if t.Infohash == infohash {
+			return t, true
+		}
+	}
+	return TorrentDigest{}, false
+}
+
+func selectedSize(job *JobRecord) int64 {
+	if job.FileIndex == nil {
+		return 0
+	}
+	for _, f := range job.Files {
+		if f.Index == *job.FileIndex {
+			return f.Size
+		}
+	}
+	return 0
+}
+
+func (s *Service) StartSweeper(ctx context.Context, interval, idle time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.Sweep(ctx, idle)
+			s.Registry.Cull(ctx, time.Now(), ghostWorkerAge)
+		}
+	}
+}
+
+const ghostWorkerAge = time.Hour
+
+// RelayTarget resolves a relayed worker's real address for the relay
+// handler. Only workers that asked to be relayed are reachable this way:
+// the relay must not become an open proxy to arbitrary fleet addresses.
+func (s *Service) RelayTarget(workerID string) (string, bool) {
+	w, ok := s.Registry.Get(workerID)
+	if !ok || !w.Heartbeat.Relayed || w.PublicBase == "" {
+		return "", false
+	}
+	return w.PublicBase, true
+}
+
+func (s *Service) placeLive(now time.Time) (Worker, error) {
+	var best *Worker
+	bestFree := -1
+	seen := false
+	for _, w := range s.Registry.Snapshot() {
+		if !w.Healthy(now) || !w.Heartbeat.Remux.TakesYoutube() {
+			continue
+		}
+		seen = true
+		free := w.Heartbeat.Remux.LiveSlots - w.Heartbeat.Remux.ActiveLives
+		if free <= 0 {
+			continue
+		}
+		if best == nil || free > bestFree {
+			candidate := w
+			best, bestFree = &candidate, free
+		}
+	}
+	switch {
+	case best != nil:
+		return *best, nil
+	case seen:
+		return Worker{}, ErrWorkersBusy
+	default:
+		return Worker{}, ErrNoLive
+	}
+}
+
+// StartLive puts a room's live on a worker: placement, then the liveStart
+// job, whose refusal is the caller's error. The job lives as long as the
+// worker reports the live; releasing it stops the live.
+func (s *Service) StartLive(ctx context.Context, roomID, url, relay, broadcast string) (*JobRecord, error) {
+	if s.Hub == nil || !s.Hub.Enabled() {
+		return nil, ErrDisabled
+	}
+	worker, err := s.placeLive(time.Now())
+	if err != nil {
+		return nil, err
+	}
+	job := &JobRecord{
+		ID:         "l_" + randomID(8),
+		RoomID:     roomID,
+		Kind:       JobKindLive,
+		URL:        url,
+		WorkerID:   worker.ID,
+		State:      JobServing,
+		CreatedAt:  time.Now(),
+		LastSeenAt: time.Now(),
+	}
+	if err := s.Registry.SaveJob(ctx, job, s.JobTTL); err != nil {
+		return nil, err
+	}
+	result, err := s.Hub.Dispatch(ctx, Job{
+		Kind:     "liveStart",
+		JobID:    job.ID,
+		WorkerID: worker.ID,
+		RoomID:   roomID,
+		Youtube:  &YoutubeJob{URL: url},
+		Live:     &LiveJob{Relay: relay, Broadcast: broadcast},
+	}, 30*time.Second)
+	switch {
+	case err != nil:
+		_ = s.Registry.DeleteJob(ctx, job)
+		return nil, errors.New(mapDispatchError(err))
+	case !result.OK:
+		_ = s.Registry.DeleteJob(ctx, job)
+		switch result.Error {
+		case "live_busy":
+			return nil, ErrWorkersBusy
+		case "youtube_disabled", "remux_disabled":
+			return nil, ErrNoLive
+		default:
+			return nil, errors.New(result.Error)
+		}
+	}
+	return job, nil
+}
+
+// ObserveLives reads the lives a heartbeat carries: each keeps its job
+// alive, hands its state to OnLive, and a finished one releases the job so
+// the slot is free again.
+func (s *Service) ObserveLives(workerID string, hb Heartbeat) {
+	if hb.Remux == nil || len(hb.Remux.Lives) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, report := range hb.Remux.Lives {
+		ids, err := s.Registry.JobsForRoom(ctx, report.RoomID)
+		if err != nil {
+			continue
+		}
+		for _, id := range ids {
+			job, err := s.Registry.LoadJob(ctx, id)
+			if err != nil || job == nil || job.Kind != JobKindLive || job.WorkerID != workerID {
+				continue
+			}
+			final := report.State.State == "ended" || report.State.State == "failed"
+			if final {
+				s.release(ctx, job)
+			} else {
+				job.LastSeenAt = time.Now()
+				_ = s.Registry.SaveJob(ctx, job, s.JobTTL)
+			}
+		}
+		if s.OnLive != nil {
+			s.OnLive(report.RoomID, workerID, report.State)
+		}
+	}
+}

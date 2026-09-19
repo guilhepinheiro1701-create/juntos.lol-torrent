@@ -1,0 +1,1122 @@
+package room
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/redis/go-redis/v9"
+)
+
+var ErrNotFound = errors.New("room not found")
+
+// ErrSubtitleLimit says a room already holds as many imported subtitle tracks
+// as it may.
+var ErrSubtitleLimit = errors.New("subtitle limit reached")
+
+// ImportedSubtitleIndexBase is the first index an imported subtitle track
+// takes: far above any extraction, so the two lists never collide.
+const ImportedSubtitleIndexBase = 1000
+
+// ErrSharingClosed is a guest starting a screen in a room the host closed.
+var ErrSharingClosed = errors.New("sharing closed")
+
+// ErrTooManyScreens is one screen more than MaxScreenShares.
+var ErrTooManyScreens = errors.New("too many screens")
+
+var ErrUploadReserved = errors.New("upload already reserved")
+
+var ErrUploadNotAllowed = errors.New("upload not allowed")
+
+const chatCap = 200
+
+// Store persists rooms in Redis. Every key carries the room TTL.
+type Store struct {
+	rdb *redis.Client
+	ttl time.Duration
+}
+
+func NewStore(rdb *redis.Client, ttl time.Duration) *Store {
+	return &Store{rdb: rdb, ttl: ttl}
+}
+
+func roomKey(id string) string    { return "room:" + id }
+func stateKey(id string) string   { return "room:" + id + ":state" }
+func chatKey(id string) string    { return "room:" + id + ":chat" }
+func membersKey(id string) string { return "room:" + id + ":members" }
+func uploadKey(id string) string  { return "room:" + id + ":upload" }
+
+func playlistsKey(id string) string { return "room:" + id + ":playlists" }
+func publishedKey(id string) string { return "room:" + id + ":published" }
+
+const byExpiryKey = "rooms:by_expiry"
+
+// Create stores a new room and indexes it by expiry.
+func (s *Store) Create(ctx context.Context, r *Room) error {
+	audio, err := json.Marshal(r.AudioTracks)
+	if err != nil {
+		return fmt.Errorf("marshal audio tracks: %w", err)
+	}
+	subs, err := json.Marshal(r.SubtitleTracks)
+	if err != nil {
+		return fmt.Errorf("marshal subtitle tracks: %w", err)
+	}
+
+	key := roomKey(r.ID)
+	_, err = s.rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		p.HSet(ctx, key,
+			"file_name", r.FileName,
+			"status", r.Status,
+			"source_kind", r.SourceKind,
+			"media_generation", r.MediaGeneration,
+			"controller_id", r.ControllerID,
+			"owner_token", r.OwnerToken,
+			"audio_tracks", audio,
+			"subtitle_tracks", subs,
+			"bitmap_subs_skipped", r.BitmapSubsSkipped,
+			"created_at", r.CreatedAt.Format(time.RFC3339Nano),
+			"expires_at", r.ExpiresAt.Format(time.RFC3339Nano),
+			"expires_at_unix_ms", r.ExpiresAt.UnixMilli(),
+			"expires_at_unix_nano", r.ExpiresAt.UnixNano(),
+		)
+		p.Expire(ctx, key, s.ttl)
+		p.ZAdd(ctx, byExpiryKey, redis.Z{Score: float64(r.ExpiresAt.Unix()), Member: r.ID})
+		p.Persist(ctx, byExpiryKey)
+		return nil
+	})
+	return err
+}
+
+// CreateWithMember stores a newly created room and its controller in one Redis
+// transaction so callers never expose a room without its controller member.
+func (s *Store) CreateWithMember(ctx context.Context, r *Room, m Member) error {
+	audio, err := json.Marshal(r.AudioTracks)
+	if err != nil {
+		return fmt.Errorf("marshal audio tracks: %w", err)
+	}
+	subs, err := json.Marshal(r.SubtitleTracks)
+	if err != nil {
+		return fmt.Errorf("marshal subtitle tracks: %w", err)
+	}
+	member, err := json.Marshal(m)
+	if err != nil {
+		return fmt.Errorf("marshal member: %w", err)
+	}
+
+	key := roomKey(r.ID)
+	_, err = s.rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		p.HSet(ctx, key,
+			"file_name", r.FileName,
+			"status", r.Status,
+			"source_kind", r.SourceKind,
+			"media_generation", r.MediaGeneration,
+			"controller_id", r.ControllerID,
+			"owner_token", r.OwnerToken,
+			"audio_tracks", audio,
+			"subtitle_tracks", subs,
+			"bitmap_subs_skipped", r.BitmapSubsSkipped,
+			"created_at", r.CreatedAt.Format(time.RFC3339Nano),
+			"expires_at", r.ExpiresAt.Format(time.RFC3339Nano),
+			"expires_at_unix_ms", r.ExpiresAt.UnixMilli(),
+			"expires_at_unix_nano", r.ExpiresAt.UnixNano(),
+		)
+		p.Expire(ctx, key, s.ttl)
+		p.HSet(ctx, membersKey(r.ID), m.ID, member)
+		p.Expire(ctx, membersKey(r.ID), s.ttl)
+		p.ZAdd(ctx, byExpiryKey, redis.Z{Score: float64(r.ExpiresAt.Unix()), Member: r.ID})
+		p.Persist(ctx, byExpiryKey)
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("create room and controller: %w", err)
+	}
+	return nil
+}
+
+// ReserveUpload atomically reserves uploadID for an unexpired uploading room.
+func (s *Store) ReserveUpload(ctx context.Context, roomID, uploadID string, now time.Time) error {
+	result, err := s.rdb.Eval(ctx, `
+local status = redis.call('HGET', KEYS[1], 'status')
+if not status then return 0 end
+if status ~= 'uploading' then return 2 end
+local expires = redis.call('HGET', KEYS[1], 'expires_at_unix_ms')
+if not expires then
+  local nanos = redis.call('HGET', KEYS[1], 'expires_at_unix_nano')
+  if nanos and string.len(nanos) > 6 then
+    expires = string.sub(nanos, 1, string.len(nanos) - 6)
+  end
+end
+if not expires or tonumber(expires) <= tonumber(ARGV[2]) then return 3 end
+if redis.call('HGET', KEYS[1], 'upload_id') then return 4 end
+redis.call('HSET', KEYS[1], 'upload_id', ARGV[1])
+redis.call('SET', KEYS[2], ARGV[1])
+return 1
+`, []string{roomKey(roomID), uploadKey(roomID)}, uploadID, strconv.FormatInt(now.UnixMilli(), 10)).Int64()
+	if err != nil {
+		return fmt.Errorf("reserve upload: %w", err)
+	}
+	switch result {
+	case 1:
+		return nil
+	case 4:
+		return ErrUploadReserved
+	default:
+		return ErrUploadNotAllowed
+	}
+}
+
+func (s *Store) UploadID(ctx context.Context, roomID string) (string, error) {
+	id, err := s.rdb.Get(ctx, uploadKey(roomID)).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("get reserved upload: %w", err)
+	}
+	return id, nil
+}
+
+// ReleaseUpload clears uploadID when the matching upload is terminated before
+// completion, allowing the room to receive a replacement upload.
+func (s *Store) ReleaseUpload(ctx context.Context, roomID, uploadID string) error {
+	_, err := s.rdb.Eval(ctx, `
+if redis.call('HGET', KEYS[1], 'upload_id') ~= ARGV[1] then return 0 end
+redis.call('HDEL', KEYS[1], 'upload_id', 'client_media_touched', 'producer_run', 'producer_seq', 'producer_digest')
+redis.call('DEL', KEYS[2])
+return 1
+`, []string{roomKey(roomID), uploadKey(roomID)}, uploadID).Result()
+	if err != nil {
+		return fmt.Errorf("release upload: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) Get(ctx context.Context, id string) (*Room, error) {
+	fields, err := s.rdb.HGetAll(ctx, roomKey(id)).Result()
+	if err != nil {
+		return nil, err
+	}
+	if len(fields) == 0 {
+		return nil, ErrNotFound
+	}
+
+	r := &Room{ID: id}
+	r.FileName = fields["file_name"]
+	r.Status = fields["status"]
+	r.ErrorMessage = fields["error_message"]
+	r.ControllerID = fields["controller_id"]
+	r.OwnerToken = fields["owner_token"]
+	if v := fields["audio_tracks"]; v != "" {
+		if err := json.Unmarshal([]byte(v), &r.AudioTracks); err != nil {
+			return nil, fmt.Errorf("unmarshal audio tracks: %w", err)
+		}
+	}
+	if v := fields["subtitle_tracks"]; v != "" {
+		if err := json.Unmarshal([]byte(v), &r.SubtitleTracks); err != nil {
+			return nil, fmt.Errorf("unmarshal subtitle tracks: %w", err)
+		}
+	}
+	if v := fields["imported_subtitle_tracks"]; v != "" {
+		var imported []TrackInfo
+		if err := json.Unmarshal([]byte(v), &imported); err != nil {
+			return nil, fmt.Errorf("unmarshal imported subtitle tracks: %w", err)
+		}
+		r.SubtitleTracks = append(r.SubtitleTracks, imported...)
+	}
+	if v := fields["chapters"]; v != "" {
+		if err := json.Unmarshal([]byte(v), &r.Chapters); err != nil {
+			return nil, fmt.Errorf("unmarshal chapters: %w", err)
+		}
+	}
+	if v := fields["live"]; v != "" {
+		if err := json.Unmarshal([]byte(v), &r.Live); err != nil {
+			return nil, fmt.Errorf("unmarshal live: %w", err)
+		}
+	}
+	if v := fields["subtitle_fonts"]; v != "" {
+		if err := json.Unmarshal([]byte(v), &r.SubtitleFonts); err != nil {
+			return nil, fmt.Errorf("unmarshal subtitle fonts: %w", err)
+		}
+	}
+	if v := fields["bitmap_subs_skipped"]; v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("parse bitmap_subs_skipped: %w", err)
+		}
+		r.BitmapSubsSkipped = n
+	}
+	r.SourceMemberID = fields["source_member_id"]
+	r.SourceOrigin = fields["source_origin"]
+	r.SourceKind = fields["source_kind"]
+	if r.SourceKind == "" {
+		r.SourceKind = SourceUpload
+	}
+	if v := fields["media_generation"]; v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("parse media_generation: %w", err)
+		}
+		r.MediaGeneration = n
+	}
+	if v := fields["media_version"]; v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("parse media_version: %w", err)
+		}
+		r.MediaVersion = n
+	}
+	if v := fields["subs_version"]; v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, fmt.Errorf("parse subs_version: %w", err)
+		}
+		r.SubsVersion = n
+	}
+	r.GatingEnabled = fields["gating_disabled"] != "1"
+	// Sharing is open unless a host closed it, so a room made before the flag
+	// existed still lets everyone share.
+	r.ScreenShareOpen = fields["screen_closed"] != "1"
+	screens, err := parseScreenShares(fields)
+	if err != nil {
+		return nil, err
+	}
+	r.Screens = screens
+	r.ClientSubs = fields["client_subs"] == "1"
+	for field, target := range map[string]*int64{
+		"duration_ms":          &r.DurationMs,
+		"media_offset_ms":      &r.MediaOffsetMs,
+		"source_bytes":         &r.Preparation.SourceBytes,
+		"received_bytes":       &r.Preparation.ReceivedBytes,
+		"preview_target_bytes": &r.Preparation.PreviewTargetBytes,
+		"client_media_touched": &r.ProducerHeartbeatMs,
+	} {
+		if v := fields[field]; v != "" {
+			n, err := strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("parse %s: %w", field, err)
+			}
+			*target = n
+		}
+	}
+	r.Preparation.PreviewPhase = fields["preview_phase"]
+	if v := fields["media_regions"]; v != "" {
+		if err := json.Unmarshal([]byte(v), &r.MediaRegions); err != nil {
+			return nil, fmt.Errorf("parse media_regions: %w", err)
+		}
+	}
+	if fields["swarm_peers"] != "" || fields["swarm_have_bytes"] != "" {
+		swarm := &SwarmStats{}
+		for field, target := range map[string]*int64{
+			"swarm_peers":          &swarm.Peers,
+			"swarm_down_speed":     &swarm.DownSpeed,
+			"swarm_have_bytes":     &swarm.HaveBytes,
+			"swarm_selected_bytes": &swarm.SelectedBytes,
+			"swarm_disk_bytes":     &swarm.DiskBytes,
+		} {
+			if v := fields[field]; v != "" {
+				n, err := strconv.ParseInt(v, 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("parse %s: %w", field, err)
+				}
+				*target = n
+			}
+		}
+		r.Preparation.Swarm = swarm
+	}
+	if v := fields["created_at"]; v != "" {
+		t, err := time.Parse(time.RFC3339Nano, v)
+		if err != nil {
+			return nil, fmt.Errorf("parse created_at: %w", err)
+		}
+		r.CreatedAt = t
+	}
+	if v := fields["expires_at"]; v != "" {
+		t, err := time.Parse(time.RFC3339Nano, v)
+		if err != nil {
+			return nil, fmt.Errorf("parse expires_at: %w", err)
+		}
+		r.ExpiresAt = t
+	}
+	return r, nil
+}
+
+// SetSourceHolder records which member's browser holds the room's source and
+// what kind of pick it was.
+func (s *Store) SetSourceHolder(ctx context.Context, id, memberID, origin string) error {
+	return s.mutateRoom(ctx, id, false, "source_member_id", memberID, "source_origin", origin)
+}
+
+// SetIngestProgress records how much of the incoming source has landed. It is
+// written on every upload progress tick, so it deliberately bumps no version
+// and clears no error: it is a measurement, not a state change.
+func (s *Store) SetIngestProgress(ctx context.Context, id string, received, total int64) error {
+	return s.mutateRoom(ctx, id, false,
+		"received_bytes", strconv.FormatInt(received, 10),
+		"source_bytes", strconv.FormatInt(total, 10))
+}
+
+// SetPreviewPhase records which stage of preparation the source is in and how
+// many bytes the preview is expected to need. A targetBytes of 0 leaves the
+// stored estimate untouched.
+func (s *Store) SetPreviewPhase(ctx context.Context, id, phase string, targetBytes int64) error {
+	fields := []any{"preview_phase", phase}
+	if targetBytes > 0 {
+		fields = append(fields, "preview_target_bytes", strconv.FormatInt(targetBytes, 10))
+	}
+	return s.mutateRoom(ctx, id, false, fields...)
+}
+
+// SetMediaRegions records the regions the pipeline has produced. It does
+// not move the media version: a player only reloads when the region it is
+// on changes, and it decides that itself from this list.
+func (s *Store) SetMediaRegions(ctx context.Context, id string, regions []MediaRegion) error {
+	raw, err := json.Marshal(regions)
+	if err != nil {
+		return fmt.Errorf("marshal media regions: %w", err)
+	}
+	return s.mutateRoom(ctx, id, false, "media_regions", string(raw))
+}
+
+func (s *Store) SetSwarm(ctx context.Context, id string, swarm SwarmStats) error {
+	return s.mutateRoom(ctx, id, false,
+		"swarm_peers", strconv.FormatInt(swarm.Peers, 10),
+		"swarm_down_speed", strconv.FormatInt(swarm.DownSpeed, 10),
+		"swarm_have_bytes", strconv.FormatInt(swarm.HaveBytes, 10),
+		"swarm_selected_bytes", strconv.FormatInt(swarm.SelectedBytes, 10),
+		"swarm_disk_bytes", strconv.FormatInt(swarm.DiskBytes, 10),
+	)
+}
+
+func (s *Store) SetStatus(ctx context.Context, id, status string) error {
+	return s.mutateRoom(ctx, id, status != "error", "status", status)
+}
+
+func (s *Store) SetController(ctx context.Context, id, controllerID string) error {
+	return s.mutateRoom(ctx, id, false, "controller_id", controllerID)
+}
+
+// SetGatingDisabled stores the synchronized-start setting, inverted so that
+// its absence — every room created before the setting existed — means on.
+func (s *Store) SetGatingDisabled(ctx context.Context, id string, disabled bool) error {
+	value := "0"
+	if disabled {
+		value = "1"
+	}
+	return s.mutateRoom(ctx, id, false, "gating_disabled", value)
+}
+
+// screenSharePrefix is the room-hash field holding one member's live screen.
+// One field per publisher keeps starting and stopping a share a single atomic
+// write, with no read-modify-write over a shared list.
+const screenSharePrefix = "screen_share:"
+
+func parseScreenShares(fields map[string]string) ([]ScreenShare, error) {
+	var screens []ScreenShare
+	for field, value := range fields {
+		memberID, ok := strings.CutPrefix(field, screenSharePrefix)
+		if !ok {
+			continue
+		}
+		var share ScreenShare
+		// One unreadable share must not take the whole room down with it.
+		if err := json.Unmarshal([]byte(value), &share); err != nil {
+			continue
+		}
+		share.MemberID = memberID
+		screens = append(screens, share)
+	}
+	sort.Slice(screens, func(i, j int) bool {
+		if !screens[i].Since.Equal(screens[j].Since) {
+			return screens[i].Since.Before(screens[j].Since)
+		}
+		return screens[i].MemberID < screens[j].MemberID
+	})
+	return screens, nil
+}
+
+// SetScreenShareOpen records whether members other than the controller may
+// publish a screen.
+func (s *Store) SetScreenShareOpen(ctx context.Context, id string, open bool) error {
+	value := "1"
+	if open {
+		value = "0"
+	}
+	return s.mutateRoom(ctx, id, false, "screen_closed", value)
+}
+
+// MaxScreenShares is how many members may publish at once: every viewer
+// pays one relay subscription and one decoder per screen.
+const MaxScreenShares = 4
+
+// StartScreenShare records that a member is publishing, so a viewer knows
+// which broadcast to subscribe to instead of probing a relay that keeps no
+// history and announces nothing. The check that the room is open to this
+// member and has room for one more happens in the same step as the write, so
+// a host closing the room cannot lose the race against a guest starting.
+func (s *Store) StartScreenShare(ctx context.Context, id string, share ScreenShare, controller bool) error {
+	payload, err := json.Marshal(ScreenShare{Nickname: share.Nickname, Since: share.Since})
+	if err != nil {
+		return fmt.Errorf("marshal screen share: %w", err)
+	}
+	allowClosed := "0"
+	if controller {
+		allowClosed = "1"
+	}
+	result, err := s.rdb.Eval(ctx, `
+if redis.call('EXISTS', KEYS[1]) == 0 then return -1 end
+if ARGV[1] == '0' and redis.call('HGET', KEYS[1], 'screen_closed') == '1' then return -2 end
+if redis.call('HEXISTS', KEYS[1], ARGV[2]) == 0 then
+  local count = 0
+  for _, field in ipairs(redis.call('HKEYS', KEYS[1])) do
+    if string.sub(field, 1, 13) == 'screen_share:' then count = count + 1 end
+  end
+  if count >= tonumber(ARGV[4]) then return -3 end
+end
+redis.call('HSET', KEYS[1], ARGV[2], ARGV[3])
+return 1
+`, []string{roomKey(id)}, allowClosed, screenSharePrefix+share.MemberID, string(payload), MaxScreenShares).Int64()
+	if err != nil {
+		return fmt.Errorf("start screen share: %w", err)
+	}
+	switch result {
+	case -1:
+		return ErrNotFound
+	case -2:
+		return ErrSharingClosed
+	case -3:
+		return ErrTooManyScreens
+	}
+	return nil
+}
+
+// StopScreenShare drops one member's share. Called both when a member stops
+// on purpose and when their socket goes away.
+func (s *Store) StopScreenShare(ctx context.Context, id, memberID string) (bool, error) {
+	removed, err := s.rdb.HDel(ctx, roomKey(id), screenSharePrefix+memberID).Result()
+	if err != nil {
+		return false, fmt.Errorf("stop screen share: %w", err)
+	}
+	return removed > 0, nil
+}
+
+// StopScreenSharesExcept ends every share but one, which is how closing a room
+// to guest sharing leaves the host's own screen up. Reports whether anything
+// was actually dropped.
+func (s *Store) StopScreenSharesExcept(ctx context.Context, id, keepMemberID string) (bool, error) {
+	fields, err := s.rdb.HKeys(ctx, roomKey(id)).Result()
+	if err != nil {
+		return false, fmt.Errorf("list room fields: %w", err)
+	}
+	var drop []string
+	for _, field := range fields {
+		memberID, ok := strings.CutPrefix(field, screenSharePrefix)
+		if ok && memberID != keepMemberID {
+			drop = append(drop, field)
+		}
+	}
+	if len(drop) == 0 {
+		return false, nil
+	}
+	if err := s.rdb.HDel(ctx, roomKey(id), drop...).Err(); err != nil {
+		return false, fmt.Errorf("stop screen shares: %w", err)
+	}
+	return true, nil
+}
+
+// ScreenSecret returns the secret that makes the room's broadcast path
+// unguessable, minting one the first time it is asked for. The relay's tokens
+// are shared by every room, so the path is the only thing keeping one room's
+// viewers out of another's broadcast.
+func (s *Store) ScreenSecret(ctx context.Context, id string) (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("mint screen secret: %w", err)
+	}
+	result, err := s.rdb.Eval(ctx, `
+if redis.call('EXISTS', KEYS[1]) == 0 then return false end
+redis.call('HSETNX', KEYS[1], 'screen_secret', ARGV[1])
+return redis.call('HGET', KEYS[1], 'screen_secret')
+`, []string{roomKey(id)}, hex.EncodeToString(raw[:])).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("get screen secret: %w", err)
+	}
+	secret, _ := result.(string)
+	if secret == "" {
+		return "", ErrNotFound
+	}
+	return secret, nil
+}
+
+// SetError marks a room as failed and stores a user-visible processing error.
+func (s *Store) SetError(ctx context.Context, id, message string) error {
+	return s.mutateRoom(ctx, id, false, "status", "error", "error_message", message)
+}
+
+// SetTracks stores the probed track lists and the bitmap-subtitle skip count.
+func (s *Store) SetTracks(ctx context.Context, id string, audio, subs []TrackInfo, bitmapSkipped int) error {
+	a, err := json.Marshal(audio)
+	if err != nil {
+		return fmt.Errorf("marshal audio tracks: %w", err)
+	}
+	b, err := json.Marshal(subs)
+	if err != nil {
+		return fmt.Errorf("marshal subtitle tracks: %w", err)
+	}
+
+	return s.mutateRoomBump(ctx, id, false, "subs_version",
+		"audio_tracks", string(a),
+		"subtitle_tracks", string(b),
+		"bitmap_subs_skipped", bitmapSkipped,
+	)
+}
+
+// AddClientMediaBytes charges delta bytes against the room's client-upload
+// budget and returns the new total. It only lands on a room that still holds
+// a client claim and has not expired, so a sweep cannot be raced into
+// recreating a TTL-less hash.
+func (s *Store) AddClientMediaBytes(ctx context.Context, id string, delta int64) (int64, error) {
+	result, err := s.rdb.Eval(ctx, `
+if not redis.call('EXISTS', KEYS[1]) or not redis.call('HGET', KEYS[1], 'upload_id') then return false end
+redis.call('HSET', KEYS[1], 'client_media_touched', ARGV[2])
+return redis.call('HINCRBY', KEYS[1], 'client_media_bytes', ARGV[1])
+`, []string{roomKey(id)}, delta, strconv.FormatInt(time.Now().UnixMilli(), 10)).Result()
+	if errors.Is(err, redis.Nil) {
+		return 0, ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("charge client media bytes: %w", err)
+	}
+	total, ok := result.(int64)
+	if !ok {
+		return 0, ErrNotFound
+	}
+	return total, nil
+}
+
+// TouchClientClaim refreshes the heartbeat on a room's client claim, so the
+// sweeper can tell a live remux from a tab that died holding the room.
+func (s *Store) TouchClientClaim(ctx context.Context, id string) error {
+	return s.mutateRoom(ctx, id, false, "client_media_touched",
+		strconv.FormatInt(time.Now().UnixMilli(), 10))
+}
+
+// ReclaimStaleClientClaims releases the claim on every room whose client
+// media heartbeat is older than idleFor, and reports how many it freed: a
+// client claim leaves no file behind, so the file sweep cannot reach it.
+func (s *Store) ReclaimStaleClientClaims(ctx context.Context, idleFor time.Duration) (int, error) {
+	cutoff := time.Now().Add(-idleFor).UnixMilli()
+	freed := 0
+	var cursor uint64
+	for {
+		keys, next, err := s.rdb.Scan(ctx, cursor, "room:*", 200).Result()
+		if err != nil {
+			return freed, fmt.Errorf("scan for stale client claims: %w", err)
+		}
+		for _, key := range keys {
+			if strings.Count(key, ":") != 1 {
+				continue
+			}
+			fields, err := s.rdb.HMGet(ctx, key, "upload_id", "client_media_touched").Result()
+			if err != nil || len(fields) != 2 {
+				continue
+			}
+			uploadID, _ := fields[0].(string)
+			touched, _ := fields[1].(string)
+			if !strings.HasPrefix(uploadID, "client:") || touched == "" {
+				continue
+			}
+			at, err := strconv.ParseInt(touched, 10, 64)
+			if err != nil || at >= cutoff {
+				continue
+			}
+			id := strings.TrimPrefix(key, "room:")
+			if err := s.ReleaseUpload(ctx, id, uploadID); err == nil {
+				freed++
+			}
+		}
+		if next == 0 {
+			break
+		}
+		cursor = next
+	}
+	return freed, nil
+}
+
+// AddSubtitleFont appends one attached font, deduplicated by stored file name
+// and capped, bumping subs_version so viewers refresh. The read-append-write
+// is not atomic. Returns the list as stored.
+func (s *Store) AddSubtitleFont(ctx context.Context, id string, font SubtitleFont, limit int) ([]SubtitleFont, error) {
+	current, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	for _, held := range current.SubtitleFonts {
+		if held.File == font.File {
+			return current.SubtitleFonts, nil
+		}
+	}
+	if len(current.SubtitleFonts) >= limit {
+		return current.SubtitleFonts, nil
+	}
+	fonts := append(current.SubtitleFonts, font)
+	raw, err := json.Marshal(fonts)
+	if err != nil {
+		return nil, fmt.Errorf("marshal subtitle fonts: %w", err)
+	}
+	if err := s.mutateRoomBump(ctx, id, false, "subs_version", "subtitle_fonts", string(raw)); err != nil {
+		return nil, err
+	}
+	return fonts, nil
+}
+
+// SetLive records the live a room is on; nil clears it.
+func (s *Store) SetLive(ctx context.Context, id string, live *LiveInfo) error {
+	if live == nil {
+		return s.mutateRoom(ctx, id, false, "live", "")
+	}
+	encoded, err := json.Marshal(live)
+	if err != nil {
+		return fmt.Errorf("marshal live: %w", err)
+	}
+	return s.mutateRoom(ctx, id, false, "live", string(encoded))
+}
+
+func (s *Store) SetChapters(ctx context.Context, id string, chapters []Chapter) error {
+	c, err := json.Marshal(chapters)
+	if err != nil {
+		return fmt.Errorf("marshal chapters: %w", err)
+	}
+	return s.mutateRoom(ctx, id, false, "chapters", string(c))
+}
+
+// BumpMediaVersion announces that the media behind the current generation was
+// republished in place, telling players to reload the unchanged source URL.
+func (s *Store) BumpMediaVersion(ctx context.Context, id string) error {
+	return s.mutateRoomBump(ctx, id, false, "media_version")
+}
+
+func (s *Store) SetMediaDuration(ctx context.Context, id string, durationMs int64) error {
+	return s.mutateRoom(ctx, id, false, "duration_ms", strconv.FormatInt(durationMs, 10))
+}
+
+// SetMediaOffset stores where the current region's media timeline begins and
+// bumps the media version in the same atomic step, so a player never reloads
+// into an offset whose playlists are not the ones behind the URL.
+func (s *Store) SetMediaOffset(ctx context.Context, id string, offsetMs int64) error {
+	result, err := s.rdb.Eval(ctx, `
+local expires = redis.call('HGET', KEYS[1], 'expires_at_unix_ms')
+if not expires then
+  local nanos = redis.call('HGET', KEYS[1], 'expires_at_unix_nano')
+  if nanos and string.len(nanos) > 6 then
+    expires = string.sub(nanos, 1, string.len(nanos) - 6)
+  end
+end
+if not expires or tonumber(expires) <= tonumber(ARGV[1]) then return -1 end
+if redis.call('HGET', KEYS[1], 'media_offset_ms') == ARGV[2] then return 0 end
+redis.call('HSET', KEYS[1], 'media_offset_ms', ARGV[2])
+redis.call('HINCRBY', KEYS[1], 'media_version', 1)
+redis.call('PEXPIREAT', KEYS[1], tonumber(expires))
+return 1
+`, []string{roomKey(id)}, strconv.FormatInt(time.Now().UnixMilli(), 10), strconv.FormatInt(offsetMs, 10)).Int64()
+	if err != nil {
+		return fmt.Errorf("set media offset: %w", err)
+	}
+	if result == -1 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetAudioTracks stores the probed audio tracks and bitmap-subtitle skip
+// count without touching subtitle_tracks, preserving browser-supplied subs.
+func (s *Store) SetAudioTracks(ctx context.Context, id string, audio []TrackInfo, bitmapSkipped int) error {
+	a, err := json.Marshal(audio)
+	if err != nil {
+		return fmt.Errorf("marshal audio tracks: %w", err)
+	}
+
+	return s.mutateRoom(ctx, id, false,
+		"audio_tracks", string(a),
+		"bitmap_subs_skipped", bitmapSkipped,
+	)
+}
+
+// SetClientSubtitles stores browser-extracted WebVTT tracks. Only a complete
+// extraction marks the room so the media pipeline skips embedded subtitle
+// extraction; a partial one is published but the ffmpeg pass stays scheduled.
+func (s *Store) SetClientSubtitles(ctx context.Context, id string, subs []TrackInfo, complete bool) error {
+	b, err := json.Marshal(subs)
+	if err != nil {
+		return fmt.Errorf("marshal subtitle tracks: %w", err)
+	}
+
+	fields := []any{"subtitle_tracks", string(b)}
+	if complete {
+		fields = append(fields, "client_subs", "1")
+	}
+	return s.mutateRoomBump(ctx, id, false, "subs_version", fields...)
+}
+
+// AddImportedSubtitle appends one track a host imported by hand. Imported
+// tracks live apart from the extraction, which rewrites its own list whole,
+// and ride after it on every read. The same bytes import once; the list is
+// capped at limit. The read-append-write is not atomic.
+func (s *Store) AddImportedSubtitle(ctx context.Context, id string, track TrackInfo, limit int) ([]TrackInfo, error) {
+	current, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	imported := make([]TrackInfo, 0, len(current.SubtitleTracks))
+	for _, held := range current.SubtitleTracks {
+		if held.Index < ImportedSubtitleIndexBase {
+			continue
+		}
+		if held.Digest == track.Digest && held.Language == track.Language {
+			return importedOf(current.SubtitleTracks), nil
+		}
+		imported = append(imported, held)
+	}
+	if len(imported) >= limit {
+		return nil, ErrSubtitleLimit
+	}
+	imported = append(imported, track)
+	raw, err := json.Marshal(imported)
+	if err != nil {
+		return nil, fmt.Errorf("marshal imported subtitle tracks: %w", err)
+	}
+	if err := s.mutateRoomBump(ctx, id, false, "subs_version", "imported_subtitle_tracks", string(raw)); err != nil {
+		return nil, err
+	}
+	return imported, nil
+}
+
+func importedOf(tracks []TrackInfo) []TrackInfo {
+	out := make([]TrackInfo, 0, len(tracks))
+	for _, held := range tracks {
+		if held.Index >= ImportedSubtitleIndexBase {
+			out = append(out, held)
+		}
+	}
+	return out
+}
+
+// SwapSource repoints a live room at a new source, keeping its members, chat
+// and controller and clearing everything describing the previous media —
+// tracks, error, upload reservation, position, playlists and published set.
+// Returns the upload id reserved before the swap and the new generation.
+func (s *Store) SwapSource(ctx context.Context, id, kind, fileName, status string, now time.Time) (previousUpload string, generation int, err error) {
+	result, err := s.rdb.Eval(ctx, `
+local status = redis.call('HGET', KEYS[1], 'status')
+if not status then return {0, '', 0} end
+local expires = redis.call('HGET', KEYS[1], 'expires_at_unix_ms')
+if not expires then
+  local nanos = redis.call('HGET', KEYS[1], 'expires_at_unix_nano')
+  if nanos and string.len(nanos) > 6 then
+    expires = string.sub(nanos, 1, string.len(nanos) - 6)
+  end
+end
+if not expires or tonumber(expires) <= tonumber(ARGV[4]) then return {0, '', 0} end
+local previous = redis.call('HGET', KEYS[1], 'upload_id') or ''
+local generation = tonumber(redis.call('HGET', KEYS[1], 'media_generation') or '0') + 1
+redis.call('HSET', KEYS[1],
+  'status', ARGV[1],
+  'file_name', ARGV[2],
+  'source_kind', ARGV[3],
+  'media_generation', generation,
+  'media_version', 0,
+  'subs_version', 0,
+  'audio_tracks', 'null',
+  'subtitle_tracks', 'null',
+  'bitmap_subs_skipped', 0)
+redis.call('HDEL', KEYS[1], 'upload_id', 'error_message', 'client_subs', 'chapters', 'subtitle_fonts', 'imported_subtitle_tracks',
+  'client_media_bytes', 'client_media_touched', 'source_bytes', 'received_bytes', 'preview_phase', 'preview_target_bytes',
+		'swarm_peers', 'swarm_down_speed', 'swarm_have_bytes', 'swarm_selected_bytes', 'swarm_disk_bytes', 'media_regions',
+  'duration_ms', 'media_offset_ms', 'producer_run', 'producer_seq', 'producer_digest', 'metadata_token', 'live')
+for _, field in ipairs(redis.call('HKEYS', KEYS[1])) do
+  if string.sub(field, 1, 13) == 'screen_share:' then redis.call('HDEL', KEYS[1], field) end
+end
+redis.call('DEL', KEYS[2])
+redis.call('DEL', KEYS[3])
+redis.call('DEL', KEYS[4])
+redis.call('DEL', KEYS[5])
+redis.call('PEXPIREAT', KEYS[1], tonumber(expires))
+return {1, previous, generation}
+`, []string{roomKey(id), uploadKey(id), stateKey(id), playlistsKey(id), publishedKey(id)},
+		status, fileName, kind, strconv.FormatInt(now.UnixMilli(), 10)).Slice()
+	if err != nil {
+		return "", 0, fmt.Errorf("swap room source: %w", err)
+	}
+	if len(result) != 3 {
+		return "", 0, fmt.Errorf("swap room source: unexpected reply")
+	}
+	ok, _ := result[0].(int64)
+	if ok != 1 {
+		return "", 0, ErrNotFound
+	}
+	previousUpload, _ = result[1].(string)
+	newGeneration, _ := result[2].(int64)
+	return previousUpload, int(newGeneration), nil
+}
+
+func (s *Store) HasClientSubs(ctx context.Context, id string) (bool, error) {
+	v, err := s.rdb.HGet(ctx, roomKey(id), "client_subs").Result()
+	if errors.Is(err, redis.Nil) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get client subs flag: %w", err)
+	}
+	return v == "1", nil
+}
+
+func (s *Store) mutateRoom(ctx context.Context, id string, clearError bool, fields ...any) error {
+	return s.mutateRoomBump(ctx, id, clearError, "", fields...)
+}
+
+// mutateRoomBump is mutateRoom plus an optional counter field incremented in
+// the same atomic step, so a version can never advance without its payload.
+func (s *Store) mutateRoomBump(ctx context.Context, id string, clearError bool, bumpField string, fields ...any) error {
+	args := make([]any, 0, len(fields)+3)
+	args = append(args, strconv.FormatInt(time.Now().UnixMilli(), 10))
+	if clearError {
+		args = append(args, "1")
+	} else {
+		args = append(args, "0")
+	}
+	args = append(args, bumpField)
+	args = append(args, fields...)
+
+	result, err := s.rdb.Eval(ctx, `
+local expires = redis.call('HGET', KEYS[1], 'expires_at_unix_ms')
+if not expires then
+  local nanos = redis.call('HGET', KEYS[1], 'expires_at_unix_nano')
+  if nanos and string.len(nanos) > 6 then
+    expires = string.sub(nanos, 1, string.len(nanos) - 6)
+  end
+end
+if not expires or tonumber(expires) <= tonumber(ARGV[1]) then return 0 end
+for i = 4, #ARGV, 2 do
+  redis.call('HSET', KEYS[1], ARGV[i], ARGV[i + 1])
+end
+if ARGV[3] ~= '' then redis.call('HINCRBY', KEYS[1], ARGV[3], 1) end
+if ARGV[2] == '1' then redis.call('HDEL', KEYS[1], 'error_message') end
+redis.call('PEXPIREAT', KEYS[1], tonumber(expires))
+return 1
+`, []string{roomKey(id)}, args...).Int64()
+	if err != nil {
+		return fmt.Errorf("mutate room: %w", err)
+	}
+	if result == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) SetState(ctx context.Context, id string, st PlayState) error {
+	key := stateKey(id)
+	_, err := s.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
+		p.HSet(ctx, key,
+			"playing", st.Playing,
+			"position_ms", st.PositionMs,
+			"rate", st.Rate,
+			"server_time_ms", st.ServerTimeMs,
+		)
+		p.Expire(ctx, key, s.ttl)
+		return nil
+	})
+	return err
+}
+
+// GetState loads the playback state. A missing state returns the zero
+// PlayState (paused at position 0).
+func (s *Store) GetState(ctx context.Context, id string) (PlayState, error) {
+	fields, err := s.rdb.HGetAll(ctx, stateKey(id)).Result()
+	if err != nil {
+		return PlayState{}, err
+	}
+	var st PlayState
+	if v := fields["playing"]; v != "" {
+		st.Playing, _ = strconv.ParseBool(v)
+	}
+	if v := fields["position_ms"]; v != "" {
+		st.PositionMs, _ = strconv.ParseInt(v, 10, 64)
+	}
+	if v := fields["rate"]; v != "" {
+		st.Rate, _ = strconv.ParseFloat(v, 64)
+	}
+	if v := fields["server_time_ms"]; v != "" {
+		st.ServerTimeMs, _ = strconv.ParseInt(v, 10, 64)
+	}
+	return st, nil
+}
+
+// AddMember upserts a member in the room.
+func (s *Store) AddMember(ctx context.Context, id string, m Member) error {
+	data, err := json.Marshal(m)
+	if err != nil {
+		return fmt.Errorf("marshal member: %w", err)
+	}
+	key := membersKey(id)
+	_, err = s.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
+		p.HSet(ctx, key, m.ID, data)
+		p.Expire(ctx, key, s.ttl)
+		return nil
+	})
+	return err
+}
+
+func (s *Store) RemoveMember(ctx context.Context, id, memberID string) error {
+	return s.rdb.HDel(ctx, membersKey(id), memberID).Err()
+}
+
+func (s *Store) Members(ctx context.Context, id string) ([]Member, error) {
+	vals, err := s.rdb.HVals(ctx, membersKey(id)).Result()
+	if err != nil {
+		return nil, err
+	}
+	members := make([]Member, 0, len(vals))
+	for _, v := range vals {
+		var m Member
+		if err := json.Unmarshal([]byte(v), &m); err != nil {
+			return nil, fmt.Errorf("unmarshal member: %w", err)
+		}
+		members = append(members, m)
+	}
+	return members, nil
+}
+
+// AddMessage appends a chat message, keeping only the latest chatCap entries.
+func (s *Store) AddMessage(ctx context.Context, id string, m ChatMessage) error {
+	data, err := json.Marshal(m)
+	if err != nil {
+		return fmt.Errorf("marshal chat message: %w", err)
+	}
+	key := chatKey(id)
+	_, err = s.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
+		p.RPush(ctx, key, data)
+		p.LTrim(ctx, key, -chatCap, -1)
+		p.Expire(ctx, key, s.ttl)
+		return nil
+	})
+	return err
+}
+
+// Messages returns the room chat, oldest first.
+func (s *Store) Messages(ctx context.Context, id string) ([]ChatMessage, error) {
+	vals, err := s.rdb.LRange(ctx, chatKey(id), 0, -1).Result()
+	if err != nil {
+		return nil, err
+	}
+	msgs := make([]ChatMessage, 0, len(vals))
+	for _, v := range vals {
+		var m ChatMessage
+		if err := json.Unmarshal([]byte(v), &m); err != nil {
+			return nil, fmt.Errorf("unmarshal chat message: %w", err)
+		}
+		msgs = append(msgs, m)
+	}
+	return msgs, nil
+}
+
+// Delete removes the room, its state, chat, members and expiry index entry.
+func (s *Store) Delete(ctx context.Context, id string) error {
+	_, err := s.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
+		p.Del(ctx, roomKey(id), stateKey(id), chatKey(id), membersKey(id), uploadKey(id),
+			playlistsKey(id), publishedKey(id))
+		p.ZRem(ctx, byExpiryKey, id)
+		return nil
+	})
+	return err
+}
+
+// ExpiredIDs returns the ids of rooms whose ExpiresAt is at or before now.
+func (s *Store) ExpiredIDs(ctx context.Context, now time.Time) ([]string, error) {
+	return s.rdb.ZRangeByScore(ctx, byExpiryKey, &redis.ZRangeBy{
+		Min: "-inf",
+		Max: strconv.FormatInt(now.Unix(), 10),
+	}).Result()
+}
+
+// SetPlaylists publishes rendered HLS playlists for a room. Every playlist in
+// one call lands in a single transaction: a master and its variants must never
+// be visible out of step with each other.
+func (s *Store) SetPlaylists(ctx context.Context, id string, playlists map[string]string) error {
+	if len(playlists) == 0 {
+		return nil
+	}
+	fields := make([]any, 0, len(playlists)*2)
+	for name, body := range playlists {
+		fields = append(fields, name, body)
+	}
+	_, err := s.rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		p.HSet(ctx, playlistsKey(id), fields...)
+		p.Expire(ctx, playlistsKey(id), s.ttl)
+		return nil
+	})
+	return err
+}
+
+// Playlist returns one rendered playlist. A missing one is ErrNotFound: it
+// means the room has not published that name, which a viewer sees as a 404.
+func (s *Store) Playlist(ctx context.Context, id, name string) (string, error) {
+	body, err := s.rdb.HGet(ctx, playlistsKey(id), name).Result()
+	if errors.Is(err, redis.Nil) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	return body, nil
+}
+
+func (s *Store) HasPlaylist(ctx context.Context, id, name string) (bool, error) {
+	return s.rdb.HExists(ctx, playlistsKey(id), name).Result()
+}
+
+// MarkPublished records that objects are readable from the bucket. Playlists
+// only ever reference names recorded here, so this set is what keeps a viewer
+// from being handed a segment that has not finished uploading.
+func (s *Store) MarkPublished(ctx context.Context, id string, names ...string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	members := make([]any, len(names))
+	for i, name := range names {
+		members[i] = name
+	}
+	_, err := s.rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		p.SAdd(ctx, publishedKey(id), members...)
+		p.Expire(ctx, publishedKey(id), s.ttl)
+		return nil
+	})
+	return err
+}
+
+func (s *Store) Published(ctx context.Context, id string) (map[string]struct{}, error) {
+	names, err := s.rdb.SMembers(ctx, publishedKey(id)).Result()
+	if err != nil {
+		return nil, err
+	}
+	published := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		published[name] = struct{}{}
+	}
+	return published, nil
+}
+
+// SwapSourceForTest points a room at a live with nothing else changed; tests
+// of the reporters use it instead of the HTTP route.
+func (s *Store) SwapSourceForTest(ctx context.Context, id string) error {
+	_, _, err := s.SwapSource(ctx, id, SourceLive, "live", "processing", time.Now())
+	return err
+}

@@ -1,0 +1,53 @@
+FROM node:24-bookworm AS web-build
+
+# The commit the image was built from, shown in the app's header. The build
+# context excludes .git, so it has to be handed in.
+ARG GIT_SHA=dev
+ENV VITE_GIT_SHA=$GIT_SHA
+
+# The community invite shown in the header, set per deployment in .env. Empty
+# by default: a fork with no server of its own shows no link at all.
+ARG DISCORD_URL=
+ENV VITE_DISCORD_URL=$DISCORD_URL
+
+# Public browser key for Google Drive (public links only). Baked into the
+# bundle at build time; restrict by HTTP referrer in the Google console.
+ARG VITE_GOOGLE_DRIVE_API_KEY=
+ENV VITE_GOOGLE_DRIVE_API_KEY=$VITE_GOOGLE_DRIVE_API_KEY
+
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+# The install hook that keeps public/matroska-subtitles.min.js in step with
+# the package runs as part of `npm ci`, so its script has to be here already,
+# and so do the patches it applies to node_modules.
+COPY web/scripts ./scripts
+COPY web/patches ./patches
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
+FROM golang:1.26-bookworm AS go-build
+
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd cmd
+COPY internal internal
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /bin/server ./cmd/server
+
+FROM debian:trixie-slim
+
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends ca-certificates \
+	&& useradd --system --uid 10001 --create-home app \
+	&& mkdir -p /data /web \
+	&& chown -R app:app /data /web \
+	&& rm -rf /var/lib/apt/lists/*
+
+COPY --from=go-build /bin/server /bin/server
+COPY --from=web-build --chown=app:app /src/web/dist /web
+
+ENV WEB_DIR=/web
+USER app
+EXPOSE 8080
+ENTRYPOINT ["/bin/server"]

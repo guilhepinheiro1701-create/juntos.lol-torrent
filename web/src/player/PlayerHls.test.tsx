@@ -1,0 +1,411 @@
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { createRef } from 'react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { translate, type Translator } from '../i18n/useT'
+import type { RoomInfo } from '../types'
+import { Player } from './Player'
+
+vi.mock('hls.js', () => {
+  type Handler = (event: string, data: Record<string, unknown>) => void
+  class FakeLoader {
+    lastContext: Record<string, unknown> | null = null
+    lastCallbacks: Record<string, (...args: unknown[]) => void> | null = null
+    load(context: Record<string, unknown>, _config: unknown, callbacks: Record<string, (...args: unknown[]) => void>) {
+      this.lastContext = context
+      this.lastCallbacks = callbacks
+    }
+  }
+  class FakeHls {
+    static instances: FakeHls[] = []
+    static isSupported = () => true
+    static Events = {
+      MEDIA_ATTACHED: 'hlsMediaAttached',
+      MANIFEST_PARSED: 'hlsManifestParsed',
+      LEVELS_UPDATED: 'hlsLevelsUpdated',
+      AUDIO_TRACKS_UPDATED: 'hlsAudioTracksUpdated',
+      BUFFER_CREATED: 'hlsBufferCreated',
+      ERROR: 'hlsError',
+    }
+    static DefaultConfig = { loader: FakeLoader }
+    config: Record<string, unknown>
+    handlers = new Map<string, Handler[]>()
+    levels: Array<{ videoCodec?: string; audioCodec?: string; width?: number; height?: number }> = []
+    audioTracks: unknown[] = []
+    destroyed = false
+    loadedSource: string | null = null
+    loadSourceCalls = 0
+    startLoadCalls = 0
+    recoverCalls = 0
+    constructor(config: Record<string, unknown>) {
+      this.config = config
+      FakeHls.instances.push(this)
+    }
+    on(event: string, handler: Handler) {
+      this.handlers.set(event, [...(this.handlers.get(event) ?? []), handler])
+    }
+    emit(event: string, data: Record<string, unknown>) {
+      for (const handler of this.handlers.get(event) ?? []) handler(event, data)
+    }
+    loadSource(url: string) { this.loadedSource = url; this.loadSourceCalls += 1 }
+    attachMedia() { this.emit(FakeHls.Events.MEDIA_ATTACHED, {}) }
+    startLoad() { this.startLoadCalls += 1 }
+    recoverMediaError() { this.recoverCalls += 1 }
+    destroy() { this.destroyed = true }
+  }
+  return {
+    default: FakeHls,
+    ErrorTypes: { NETWORK_ERROR: 'networkError', MEDIA_ERROR: 'mediaError', OTHER_ERROR: 'otherError' },
+    ErrorDetails: {
+      BUFFER_INCOMPATIBLE_CODECS_ERROR: 'bufferIncompatibleCodecsError',
+      BUFFER_ADD_CODEC_ERROR: 'bufferAddCodecError',
+      MANIFEST_INCOMPATIBLE_CODECS_ERROR: 'manifestIncompatibleCodecsError',
+    },
+  }
+})
+
+interface FakeHlsInstance {
+  config: {
+    startPosition?: number
+    pLoader?: new (config: unknown) => {
+      load: (context: unknown, config: unknown, callbacks: unknown) => void
+      lastCallbacks: { onSuccess: (response: { data: string }, stats: unknown, context: unknown, network: unknown) => void } | null
+    }
+  }
+  levels: Array<{ videoCodec?: string; audioCodec?: string }>
+  destroyed: boolean
+  loadedSource: string | null
+  loadSourceCalls: number
+  recoverCalls: number
+  emit: (event: string, data: Record<string, unknown>) => void
+}
+
+const fakeHls = async () => (await import('hls.js')).default as unknown as { instances: FakeHlsInstance[] }
+
+const t = Object.assign((key: string) => translate('en', key), {
+  language: 'en' as const,
+  setLanguage: vi.fn(),
+}) as Translator
+
+const room: RoomInfo = {
+  id: 'r1',
+  fileName: 'movie.mkv',
+  status: 'ready',
+  sourceKind: 'upload',
+  mediaGeneration: 3,
+  mediaVersion: 0,
+  subsVersion: 0,
+  controllerId: 'm1',
+  audioTracks: null,
+  subtitleTracks: null,
+  bitmapSubsSkipped: 0,
+  memberCount: 1,
+  expiresAt: new Date(Date.now() + 60_000).toISOString(),
+  mediaBaseUrl: 'https://media.example.test/rooms/r1/g0',
+}
+
+const unplayableMessage = translate('en', 'room.unplayable')
+const playbackFailedMessage = translate('en', 'room.playbackFailed')
+
+async function renderPlayer(override: Partial<RoomInfo> = {}) {
+  const videoRef = createRef<HTMLVideoElement>()
+  const view = render(
+    <Player room={{ ...room, ...override }} isController={false} videoRef={videoRef} send={vi.fn()} t={t} />,
+  )
+  const hls = await fakeHls()
+  await waitFor(() => expect(hls.instances.length).toBeGreaterThan(0))
+  return { videoRef, view, hls }
+}
+
+describe('Player HLS lifecycle', () => {
+  beforeEach(async () => {
+    (await fakeHls()).instances.length = 0
+    vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  })
+
+  it('does not reload the source when the media re-attaches after a recovery', async () => {
+    const { hls } = await renderPlayer()
+    const instance = hls.instances[0]
+
+    act(() => instance.emit('hlsError', { fatal: true, type: 'mediaError', details: 'bufferStalledError' }))
+    act(() => instance.emit('hlsMediaAttached', {}))
+
+    expect(instance.recoverCalls).toBe(1)
+    expect(instance.loadSourceCalls).toBe(1)
+  })
+
+  it('declares the room unplayable when hls.js drops the only video rendition', async () => {
+    const { view, hls } = await renderPlayer()
+    const instance = hls.instances[0]
+    instance.levels = [{ videoCodec: 'hvc1.2.4.L120.90', audioCodec: 'mp4a.40.2' }]
+
+    act(() => instance.emit('hlsError', {
+      fatal: false,
+      type: 'mediaError',
+      details: 'bufferAddCodecError',
+      sourceBufferName: 'video',
+      mimeType: 'video/mp4;codecs=hvc1.2.4.L120.90',
+    }))
+
+    expect(view.getByRole('alert')).toHaveTextContent(unplayableMessage)
+    expect(instance.destroyed).toBe(true)
+    expect(console.error).toHaveBeenCalledWith('[ss-player]', expect.stringContaining('giving up'))
+  })
+
+  it('stays quiet about a dropped codec while another video rendition remains', async () => {
+    const { view, hls } = await renderPlayer()
+    const instance = hls.instances[0]
+    instance.levels = [{ videoCodec: 'avc1.640028', audioCodec: 'mp4a.40.2' }]
+
+    act(() => instance.emit('hlsError', {
+      fatal: false,
+      type: 'mediaError',
+      details: 'bufferAddCodecError',
+      sourceBufferName: 'video',
+      mimeType: 'video/mp4;codecs=hvc1.2.4.L120.90',
+    }))
+
+    expect(view.queryByRole('alert')).not.toBeInTheDocument()
+    expect(instance.destroyed).toBe(false)
+  })
+
+  it('retries a fully rejected manifest without codec strings before giving up', async () => {
+    const { view, hls } = await renderPlayer()
+    const first = hls.instances[0]
+
+    act(() => first.emit('hlsError', {
+      fatal: true,
+      type: 'mediaError',
+      details: 'manifestIncompatibleCodecsError',
+    }))
+
+    expect(first.destroyed).toBe(true)
+    expect(view.queryByRole('alert')).not.toBeInTheDocument()
+    await waitFor(() => expect(hls.instances.length).toBe(2))
+    const second = hls.instances[1]
+    const LoaderClass = second.config.pLoader
+    expect(LoaderClass).toBeDefined()
+
+    const loader = new LoaderClass!({})
+    const delivered: string[] = []
+    loader.load({ type: 'manifest' }, {}, {
+      onSuccess: (response: { data: string }) => delivered.push(response.data),
+    })
+    loader.lastCallbacks!.onSuccess(
+      { data: '#EXT-X-STREAM-INF:BANDWIDTH=1,CODECS="hvc1.2.4.L120.B01,mp4a.40.2",RESOLUTION=1920x1080\ns.m3u8\n' },
+      {}, { type: 'manifest' }, null,
+    )
+    expect(delivered[0]).not.toContain('CODECS')
+    expect(delivered[0]).toContain('RESOLUTION=1920x1080')
+
+    act(() => second.emit('hlsError', {
+      fatal: true,
+      type: 'mediaError',
+      details: 'manifestIncompatibleCodecsError',
+    }))
+    expect(view.getByRole('alert')).toHaveTextContent(unplayableMessage)
+  })
+
+  it('rebuilds the player when the clock advances with no video frames, and gives up only when that keeps happening', async () => {
+    vi.useFakeTimers()
+    try {
+      const videoRef = createRef<HTMLVideoElement>()
+      const view = render(
+        <Player room={room} isController={false} videoRef={videoRef} send={vi.fn()} t={t} />,
+      )
+      const video = videoRef.current!
+      let clock = 0
+      const events: string[] = []
+      vi.mocked(console.warn).mockImplementation((...args: unknown[]) => { events.push(String(args[1])) })
+      Object.defineProperty(video, 'currentTime', { configurable: true, get: () => clock, set: () => undefined })
+      Object.defineProperty(video, 'paused', { configurable: true, value: false })
+      Object.defineProperty(video, 'readyState', { configurable: true, value: HTMLMediaElement.HAVE_CURRENT_DATA })
+      Object.defineProperty(video, 'getVideoPlaybackQuality', {
+        configurable: true,
+        value: () => ({ totalVideoFrames: 0 }),
+      })
+
+      await act(async () => {
+        for (let tick = 0; tick < 8; tick += 1) {
+          clock += 1
+          await vi.advanceTimersByTimeAsync(1000)
+        }
+      })
+      expect(events.some((event) => event.includes('rebuilding the player 1/'))).toBe(true)
+      expect(view.queryByRole('alert')).toBeNull()
+
+      // The rebuild lands on React's own schedule; give it a turn between rounds.
+      for (let round = 0; round < 3; round += 1) {
+        await act(async () => {
+          for (let tick = 0; tick < 8; tick += 1) {
+            clock += 1
+            await vi.advanceTimersByTimeAsync(1000)
+          }
+        })
+      }
+
+      expect(events.some((event) => event.includes('rebuilding the player 2/'))).toBe(true)
+      expect(view.getByRole('alert')).toHaveTextContent(playbackFailedMessage)
+      expect(view.getByRole('alert')).not.toHaveTextContent(unplayableMessage)
+      expect(console.error).toHaveBeenCalledWith('[ss-player]', expect.stringContaining('no new video frames'))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not count frames the browser skips while the tab is hidden', async () => {
+    vi.useFakeTimers()
+    vi.mocked(console.warn).mockClear()
+    const visibility = Object.getOwnPropertyDescriptor(Document.prototype, 'visibilityState')
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' })
+    try {
+      const videoRef = createRef<HTMLVideoElement>()
+      const view = render(
+        <Player room={room} isController={false} videoRef={videoRef} send={vi.fn()} t={t} />,
+      )
+      const video = videoRef.current!
+      let clock = 0
+      Object.defineProperty(video, 'currentTime', { configurable: true, get: () => clock, set: () => undefined })
+      Object.defineProperty(video, 'paused', { configurable: true, value: false })
+      Object.defineProperty(video, 'readyState', { configurable: true, value: HTMLMediaElement.HAVE_CURRENT_DATA })
+      Object.defineProperty(video, 'getVideoPlaybackQuality', {
+        configurable: true,
+        value: () => ({ totalVideoFrames: 0 }),
+      })
+
+      await act(async () => {
+        for (let tick = 0; tick < 30; tick += 1) {
+          clock += 1
+          await vi.advanceTimersByTimeAsync(1000)
+        }
+      })
+
+      expect(view.queryByRole('alert')).toBeNull()
+      expect(console.warn).not.toHaveBeenCalledWith('[ss-player]', expect.stringContaining('rebuilding the player'))
+    } finally {
+      if (visibility) Object.defineProperty(document, 'visibilityState', visibility)
+      else delete (document as { visibilityState?: unknown }).visibilityState
+      vi.useRealTimers()
+    }
+  })
+
+  it('waits out a clock running ahead of an empty buffer without giving up', async () => {
+    vi.useFakeTimers()
+    try {
+      const videoRef = createRef<HTMLVideoElement>()
+      const view = render(
+        <Player room={room} isController={false} videoRef={videoRef} send={vi.fn()} t={t} />,
+      )
+      const video = videoRef.current!
+      let clock = 0
+      Object.defineProperty(video, 'currentTime', { configurable: true, get: () => clock, set: () => undefined })
+      Object.defineProperty(video, 'paused', { configurable: true, value: false })
+      Object.defineProperty(video, 'readyState', { configurable: true, value: HTMLMediaElement.HAVE_NOTHING })
+      Object.defineProperty(video, 'getVideoPlaybackQuality', {
+        configurable: true,
+        value: () => ({ totalVideoFrames: 0 }),
+      })
+
+      await act(async () => {
+        for (let tick = 0; tick < 12; tick += 1) {
+          clock += 1
+          await vi.advanceTimersByTimeAsync(1000)
+        }
+      })
+
+      expect(view.queryByRole('alert')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not condemn a platform that renders without reporting a frame count', async () => {
+    vi.useFakeTimers()
+    try {
+      const videoRef = createRef<HTMLVideoElement>()
+      const view = render(
+        <Player room={room} isController={false} videoRef={videoRef} send={vi.fn()} t={t} />,
+      )
+      const video = videoRef.current!
+      let clock = 0
+      Object.defineProperty(video, 'currentTime', { configurable: true, get: () => clock, set: () => undefined })
+      Object.defineProperty(video, 'paused', { configurable: true, value: false })
+      Object.defineProperty(video, 'getVideoPlaybackQuality', {
+        configurable: true,
+        value: () => ({ totalVideoFrames: 0 }),
+      })
+      Object.defineProperty(video, 'videoWidth', { configurable: true, value: 1920 })
+
+      await act(async () => {
+        for (let tick = 0; tick < 12; tick += 1) {
+          clock += 1
+          await vi.advanceTimersByTimeAsync(1000)
+        }
+      })
+
+      expect(view.queryByRole('alert')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reloads in place and resumes when the media version moves, restarts on a new generation', async () => {
+    const { videoRef, view, hls } = await renderPlayer()
+    expect(hls.instances[0].loadedSource).toContain('g=3&v=0')
+    videoRef.current!.currentTime = 42
+
+    view.rerender(
+      <Player room={{ ...room, mediaVersion: 1 }} isController={false} videoRef={videoRef} send={vi.fn()} t={t} />,
+    )
+    await waitFor(() => expect(hls.instances.length).toBe(2))
+    expect(hls.instances[0].destroyed).toBe(true)
+    expect(hls.instances[1].loadedSource).toContain('g=3&v=1')
+    expect(hls.instances[1].config.startPosition).toBe(42)
+
+    view.rerender(
+      <Player room={{ ...room, mediaGeneration: 4, mediaVersion: 1 }} isController={false} videoRef={videoRef} send={vi.fn()} t={t} />,
+    )
+    await waitFor(() => expect(hls.instances.length).toBe(3))
+    expect(hls.instances[2].config.startPosition).toBe(0)
+    expect(hls.instances[2].loadedSource).toContain('g=4&v=1')
+  })
+
+  it('refetches grown subtitle files and keeps the viewer selection', async () => {
+    const subtitleTracks = [{ index: 0, language: 'en', title: 'English', codec: 'webvtt' }]
+    const { videoRef, view } = await renderPlayer({ subtitleTracks, subsVersion: 1 })
+    const video = videoRef.current!
+    const textTracks = [{
+      mode: 'disabled',
+      activeCues: null,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }]
+    Object.defineProperty(video, 'textTracks', { configurable: true, value: textTracks })
+
+    fireEvent.click(screen.getByRole('button', { name: /settings|configurações/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /subtitles|legendas/i }))
+    fireEvent.click(await screen.findByRole('button', { name: 'English' }))
+    expect(textTracks[0].mode).toBe('hidden')
+    expect(view.container.querySelector('track')?.getAttribute('src')).toContain('&s=1')
+
+    view.rerender(
+      <Player room={{ ...room, subtitleTracks, subsVersion: 2 }} isController={false} videoRef={videoRef} send={vi.fn()} t={t} />,
+    )
+    expect(view.container.querySelector('track')?.getAttribute('src')).toContain('&s=2')
+    expect(textTracks[0].mode).toBe('hidden')
+  })
+
+  it('replaces the track element when the subtitles grow, so the browser reloads the cues', async () => {
+    const subtitleTracks = [{ index: 0, language: 'en', title: 'English', codec: 'webvtt' }]
+    const { videoRef, view } = await renderPlayer({ subtitleTracks, subsVersion: 1 })
+    const before = view.container.querySelector('track')
+
+    view.rerender(
+      <Player room={{ ...room, subtitleTracks, subsVersion: 2 }} isController={false} videoRef={videoRef} send={vi.fn()} t={t} />,
+    )
+    const after = view.container.querySelector('track')
+    expect(after).not.toBeNull()
+    expect(after).not.toBe(before)
+  })
+})

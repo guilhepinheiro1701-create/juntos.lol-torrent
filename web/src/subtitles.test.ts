@@ -1,0 +1,209 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { parseAssHeader } from './assvtt'
+import { createSubtitleCollector, toWebVTT, type SubtitleCue } from './subtitles'
+
+describe('toWebVTT', () => {
+  it('serializes cues with millisecond timings sorted by start time', () => {
+    const cues: SubtitleCue[] = [
+      { text: 'Second', time: 3_723_456.4, duration: 1_500 },
+      { text: 'First', time: 1_000, duration: 3_000 },
+    ]
+    expect(toWebVTT(cues)).toBe(
+      'WEBVTT\n' +
+      '\n' +
+      '00:00:01.000 --> 00:00:04.000 line:-3\n' +
+      'First\n' +
+      '\n' +
+      '01:02:03.456 --> 01:02:04.956 line:-3\n' +
+      'Second\n',
+    )
+  })
+
+  it('turns ASS italic overrides into VTT italic tags and \\N into newlines', () => {
+    const vtt = toWebVTT([{ text: '{\\i1}Hello{\\i0}\\N{\\an8}world', time: 0, duration: 1_000 }])
+    expect(vtt).toContain('00:00:00.000 --> 00:00:01.000 line:-3\n<i>Hello</i>\nworld\n')
+  })
+
+  it('turns ASS bold overrides into VTT bold tags', () => {
+    const vtt = toWebVTT([{ text: '{\\b1}loud{\\b0} quiet', time: 0, duration: 1_000 }])
+    expect(vtt).toContain('<b>loud</b> quiet')
+  })
+
+  it('reads style flags out of a block that mixes them with other overrides', () => {
+    const vtt = toWebVTT([{ text: '{\\i1\\pos(20,30)}floating sign', time: 0, duration: 1_000 }])
+    expect(vtt).toContain('<i>floating sign</i>')
+  })
+
+  it('closes styles left open at the end of the cue', () => {
+    const vtt = toWebVTT([{ text: '{\\i1}a thought{\\b1}, emphasized', time: 0, duration: 1_000 }])
+    expect(vtt).toContain('<i>a thought<b>, emphasized</b></i>')
+  })
+
+  it('ignores a close for a style that was never opened', () => {
+    const vtt = toWebVTT([{ text: '{\\i0}plain words', time: 0, duration: 1_000 }])
+    expect(vtt).toContain('00:00:00.000 --> 00:00:01.000 line:-3\nplain words\n')
+  })
+
+  it('sends the second simultaneous dialogue to the top of the frame', () => {
+    const vtt = toWebVTT([
+      { text: 'primeira', time: 0, duration: 3_000 },
+      { text: 'segunda', time: 1_000, duration: 3_000 },
+    ])
+    expect(vtt).toContain('00:00:00.000 --> 00:00:03.000 line:-3\nprimeira\n')
+    expect(vtt).toContain('00:00:01.000 --> 00:00:04.000 line:2\nsegunda\n')
+  })
+
+  it('carries ASS placement and color when the track brought its header', () => {
+    const header = [
+      '[Script Info]',
+      'PlayResX: 1280',
+      'PlayResY: 720',
+      '[V4+ Styles]',
+      'Format: Name, PrimaryColour, Bold, Italic, Alignment',
+      'Style: Signs,&H0000FFFF,0,0,8',
+    ].join('\n')
+    const vtt = toWebVTT(
+      [{ text: 'placa no alto', time: 0, duration: 1_000, style: 'Signs' }],
+      parseAssHeader(header),
+    )
+    expect(vtt).toContain('00:00:00.000 --> 00:00:01.000 line:5%\n<c.yellow>placa no alto</c>\n')
+  })
+
+  it('skips cues that are only a drawing', () => {
+    const header = '[V4+ Styles]\nFormat: Name, Alignment\nStyle: Default,2'
+    const vtt = toWebVTT(
+      [
+        { text: '{\\p1}m 0 0 l 10 0{\\p0}', time: 0, duration: 1_000, style: 'Default' },
+        { text: 'fala', time: 2_000, duration: 1_000, style: 'Default' },
+      ],
+      parseAssHeader(header),
+    )
+    expect(vtt).not.toContain('m 0 0')
+    expect(vtt).toContain('fala')
+  })
+
+  it('clamps negative timings to zero', () => {
+    expect(toWebVTT([{ text: 'Hi', time: -5, duration: 500 }])).toContain('00:00:00.000 --> 00:00:00.495')
+  })
+})
+
+describe('createSubtitleCollector', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 201 }))
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  const body = (call: number) => JSON.parse(vi.mocked(fetch).mock.calls[call][1]?.body as string) as {
+    tracks: Array<{ title: string; language?: string; vtt?: string }>
+    complete: boolean
+    mediaGeneration: number
+  }
+
+  it('names the source the tracks were read from', async () => {
+    const collector = createSubtitleCollector('room1', 2)
+    collector.publish('embedded', [{ language: 'eng', title: 'Signs', vtt: 'WEBVTT' }], true)
+    await collector.flush()
+
+    expect(body(0).mediaGeneration).toBe(2)
+  })
+
+  it('reports incomplete while any registered source is still running', async () => {
+    const collector = createSubtitleCollector('room1', 0)
+    collector.register('embedded')
+    collector.publish('external', [{ language: 'eng', title: 'External', vtt: 'WEBVTT' }], true)
+    await collector.flush()
+
+    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(body(0).complete).toBe(false)
+  })
+
+  it('posts the union of every source in registration order once all are done', async () => {
+    const collector = createSubtitleCollector('room1', 0)
+    collector.register('external')
+    collector.register('embedded')
+    collector.publish('embedded', [{ language: 'jpn', title: 'Muxed', vtt: 'WEBVTT' }], true)
+    collector.publish('external', [{ language: 'eng', title: 'Sibling', vtt: 'WEBVTT' }], true)
+    await collector.flush()
+
+    const last = body(vi.mocked(fetch).mock.calls.length - 1)
+    expect(last.tracks.map((track) => track.title)).toEqual(['Sibling', 'Muxed'])
+    expect(last.complete).toBe(true)
+  })
+
+  it('sends nothing while no source has produced a track', async () => {
+    const collector = createSubtitleCollector('room1', 0)
+    collector.publish('embedded', [], false)
+    await collector.flush()
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('coalesces progressive updates instead of posting on every publish', async () => {
+    const collector = createSubtitleCollector('room1', 0)
+    collector.register('embedded')
+    for (let index = 0; index < 5; index += 1) {
+      collector.publish('embedded', [{ language: 'eng', title: `cue ${index}`, vtt: 'WEBVTT' }], false)
+    }
+    await collector.flush()
+    expect(vi.mocked(fetch).mock.calls.length).toBeLessThan(5)
+    expect(body(vi.mocked(fetch).mock.calls.length - 1).tracks[0].title).toBe('cue 4')
+  })
+
+  it('keeps the room usable when a publish request fails', async () => {
+    vi.mocked(fetch).mockRejectedValue(new Error('offline'))
+    const collector = createSubtitleCollector('room1', 0)
+    collector.publish('external', [{ language: 'eng', title: 'External', vtt: 'WEBVTT' }], true)
+    await expect(collector.flush()).resolves.toBeUndefined()
+    expect(console.error).toHaveBeenCalled()
+  })
+})
+
+describe('createSubtitleCollector, once the server has the bytes', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 201 }))
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  })
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  const posted = (call: number) => JSON.parse(vi.mocked(fetch).mock.calls[call][1]?.body as string) as {
+    tracks: Array<{ title: string; language: string; vtt?: string }>
+  }
+
+  it('sends only the tracks whose cues moved', async () => {
+    const collector = createSubtitleCollector('r1', 1)
+    collector.publish('embedded', [
+      { language: 'eng', title: 'Signs', vtt: 'WEBVTT\n\none' },
+      { language: 'por', title: '', vtt: 'WEBVTT\n\num' },
+    ], false)
+    await collector.flush()
+
+    collector.publish('embedded', [
+      { language: 'eng', title: 'Signs', vtt: 'WEBVTT\n\none' },
+      { language: 'por', title: '', vtt: 'WEBVTT\n\num\n\ndois' },
+    ], true)
+    await collector.flush()
+
+    expect(posted(0).tracks.map((t) => t.vtt !== undefined)).toEqual([true, true])
+    expect(posted(1).tracks.map((t) => t.vtt !== undefined)).toEqual([false, true])
+    expect(posted(1).tracks[0].language).toBe('eng')
+    expect(posted(1).tracks[1].vtt).toBe('WEBVTT\n\num\n\ndois')
+  })
+
+  it('sends everything again after a post the server refused', async () => {
+    const collector = createSubtitleCollector('r1', 1)
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 500 } as Response)
+    collector.publish('embedded', [{ language: 'eng', title: '', vtt: 'WEBVTT\n\none' }], false)
+    await collector.flush()
+    collector.publish('embedded', [{ language: 'eng', title: '', vtt: 'WEBVTT\n\none' }], true)
+    await collector.flush()
+
+    expect(posted(1).tracks[0].vtt).toBe('WEBVTT\n\none')
+  })
+})

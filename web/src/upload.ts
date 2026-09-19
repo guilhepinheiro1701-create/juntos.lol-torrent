@@ -1,0 +1,565 @@
+/**
+ * Getting a source into a room. A picked file or a url this browser remuxes
+ * itself and publishes straight into the bucket (see pipeline/clientMedia);
+ * the server signs the writes and never sees a video byte. A torrent goes
+ * the other way: the fleet's worker remuxes it, and this browser only walks
+ * the file for subtitles. A source neither can take is a room that does not
+ * open, and the host is told why.
+ */
+import { formatSeekTrace, type SeekTrace } from './pipeline/seekTrace'
+import { mockCreateRoom, mocksEnabled } from './mocks'
+import type { TorrentSession, TorrentStats, TorrentVideoFile } from './torrent'
+import type { ClientRemuxHandle } from './pipeline/clientMedia'
+// From the leaf module, never from remuxJob: a value import of remuxJob here
+// pulls mediabunny into the first-paint chunk and defeats the dynamic import.
+import { jobIsCloneable, sourceSize, type RemuxJob, type RemuxSideFile, type RemuxSource } from './pipeline/remuxTypes'
+import { FILE_UNREADABLE, REMUX_UNAVAILABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, isUnreadableFile, readFailureCode } from './uploadErrors'
+import { backendFor, type YoutubeSession } from './youtube'
+import { stopLive } from './live'
+
+export { FILE_UNREADABLE, REMUX_UNAVAILABLE, SOURCE_UNREACHABLE, UNSUPPORTED_MEDIA, WORKER_UNREACHABLE, isUnreadableFile } from './uploadErrors'
+
+const REGISTRY_TTL_MS = 30_000
+
+interface CreateRoomResponse {
+  id: string
+  nickname: string
+  ownerToken?: string
+}
+
+// The room creator's proof of ownership: a reload joins as a brand new member,
+// and this is what hands the controls back. localStorage, not sessionStorage,
+// because reopening the link in a new tab is half the real cases.
+const ownerKey = (roomID: string) => `ss.owner.${roomID}`
+
+export function ownerTokenFor(roomID: string): string {
+  try {
+    return localStorage.getItem(ownerKey(roomID)) || ''
+  } catch {
+    return ''
+  }
+}
+
+function rememberOwnerToken(room: CreateRoomResponse): void {
+  if (!room.ownerToken) return
+  try { localStorage.setItem(ownerKey(room.id), room.ownerToken) } catch {}
+}
+
+export interface UploadResult {
+  roomID: string
+  nickname: string
+}
+
+export interface UploadProgress {
+  phase: 'converting' | 'uploading'
+  pct: number
+}
+
+export interface RoomUploadProgress {
+  pct: number
+  bytesUploaded: number
+  bytesTotal: number
+}
+
+interface UploadEntry {
+  progress: RoomUploadProgress
+  done: boolean
+  error: string | null
+  progressListeners: Set<(progress: RoomUploadProgress) => void>
+  doneListeners: Set<(err: string | null) => void>
+}
+
+interface TorrentUploadSource {
+  file: TorrentVideoFile
+  session: TorrentSession
+}
+
+const uploads = new Map<string, UploadEntry>()
+
+const remuxHandles = new Map<string, ClientRemuxHandle>()
+
+// A production this tab orchestrates but does not run (the companion app's):
+// its handle answers follows like the pipeline's, and it is stopped the
+// moment another source takes the room.
+const externalStops = new Map<string, () => void>()
+
+/** The running remux pipeline for this room, when this tab is its host. */
+export function remuxHandleFor(roomID: string): ClientRemuxHandle | undefined {
+  return remuxHandles.get(roomID)
+}
+
+/** Hands the room's follow to an external production; `stop` runs when the room moves on. */
+export function registerRemuxHandle(roomID: string, handle: ClientRemuxHandle, stop: () => void): void {
+  releaseExternal(roomID)
+  remuxHandles.set(roomID, handle)
+  externalStops.set(roomID, stop)
+}
+
+export function unregisterRemuxHandle(roomID: string, handle: ClientRemuxHandle): void {
+  if (remuxHandles.get(roomID) === handle) remuxHandles.delete(roomID)
+  externalStops.delete(roomID)
+}
+
+function releaseExternal(roomID: string): void {
+  stopLive(roomID)
+  const stop = externalStops.get(roomID)
+  if (!stop) return
+  externalStops.delete(roomID)
+  remuxHandles.delete(roomID)
+  stop()
+}
+
+const torrentSessions = new Map<string, TorrentSession>()
+
+const origins = new Map<string, SourceOrigin>()
+
+// Only the host learns this: the 202 accepting the handoff is theirs.
+const remoteProductions = new Set<string>()
+
+/** Whether this room's preparo was handed to the fleet ("R" in the chip). */
+export function isRemoteProduction(roomID: string): boolean {
+  return remoteProductions.has(roomID)
+}
+export type SourceOrigin = 'file' | 'torrent' | 'url' | 'youtube'
+
+/** What this tab's pipeline for the room feeds from, when this tab runs one. */
+export function sourceOriginFor(roomID: string): SourceOrigin | null {
+  return origins.get(roomID) ?? null
+}
+
+/** The swarm behind this room's upload, when this tab is fetching it. */
+export function torrentStatsFor(roomID: string): TorrentStats | null {
+  return torrentSessions.get(roomID)?.stats() ?? null
+}
+
+/** Whether this tab still has a transfer running (or freshly failed) for the room. */
+export function uploadActive(roomID: string): boolean {
+  const entry = uploads.get(roomID)
+  return entry !== undefined && !entry.done
+}
+
+// The pipeline lives in the host's tab, so a reload kills the room's preparo.
+// The magnet or the URL is remembered — never the bytes — so re-entering the
+// room can pick the preparo back up. A picked File has no way back.
+
+export interface ResumableSource {
+  kind: 'torrent' | 'url' | 'youtube' | 'live'
+  fileName: string
+  magnet?: string
+  filePath?: string
+  url?: string
+  size?: number
+  savedAt: number
+}
+
+const RESUME_TTL_MS = 5 * 60 * 60 * 1000
+const resumeKey = (roomID: string) => `ss.resume.${roomID}`
+
+function saveResumableSource(roomID: string, source: Omit<ResumableSource, 'savedAt'>): void {
+  try {
+    localStorage.setItem(resumeKey(roomID), JSON.stringify({ ...source, savedAt: Date.now() }))
+  } catch {}
+}
+
+export function resumableSourceFor(roomID: string): ResumableSource | null {
+  try {
+    const raw = localStorage.getItem(resumeKey(roomID))
+    if (!raw) return null
+    const source = JSON.parse(raw) as ResumableSource
+    if (!source || typeof source.savedAt !== 'number' || Date.now() - source.savedAt > RESUME_TTL_MS) {
+      localStorage.removeItem(resumeKey(roomID))
+      return null
+    }
+    return source
+  } catch {
+    return null
+  }
+}
+
+export function clearResumableSource(roomID: string): void {
+  try { localStorage.removeItem(resumeKey(roomID)) } catch {}
+}
+
+async function createRoom(fileName: string, nickname: string, kind?: string): Promise<CreateRoomResponse> {
+  const response = await fetch('/api/rooms', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fileName, nickname, kind }),
+  })
+  if (!response.ok) throw new Error('create room failed')
+  const created = await response.json() as CreateRoomResponse
+  rememberOwnerToken(created)
+  return created
+}
+
+export async function createScreenRoom(nickname: string): Promise<UploadResult> {
+  if (mocksEnabled) return mockCreateRoom(nickname)
+  const room = await createRoom('', nickname, 'screen')
+  return { roomID: room.id, nickname: room.nickname }
+}
+
+export interface RoomSource {
+  status: string
+  sourceKind: 'upload' | 'screen'
+  fileName: string
+  mediaGeneration: number
+}
+
+// Repoints an existing room at a new source; everyone stays where they are.
+export async function changeRoomSource(
+  roomID: string,
+  memberId: string,
+  capability: string,
+  kind: 'upload' | 'screen' | 'youtube',
+  fileName?: string,
+): Promise<RoomSource> {
+  const response = await fetch(`/api/rooms/${encodeURIComponent(roomID)}/source`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ memberId, capability, kind, fileName }),
+  })
+  if (!response.ok) throw new Error(`change source failed (${response.status})`)
+  return await response.json() as RoomSource
+}
+
+// A File is a snapshot of a path, invalidated the moment the bytes underneath
+// change. Reading one byte up front answers that before a room exists.
+export async function assertReadable(file: File): Promise<void> {
+  const probe = file.size > 0 ? file.slice(file.size - 1, file.size) : file.slice(0, 1)
+  try {
+    await probe.arrayBuffer()
+  } catch (error) {
+    if (isUnreadableFile(error)) throw new Error(FILE_UNREADABLE)
+    throw error
+  }
+}
+
+function createEntry(bytesTotal: number): UploadEntry {
+  return {
+    progress: { pct: 0, bytesUploaded: 0, bytesTotal },
+    done: false,
+    error: null,
+    progressListeners: new Set(),
+    doneListeners: new Set(),
+  }
+}
+
+function updateEntry(entry: UploadEntry, bytesUploaded: number) {
+  const pct = entry.progress.bytesTotal > 0 ? Math.round((bytesUploaded / entry.progress.bytesTotal) * 100) : 0
+  if (pct === entry.progress.pct && bytesUploaded === entry.progress.bytesUploaded) return
+  entry.progress = { ...entry.progress, pct, bytesUploaded }
+  for (const listener of entry.progressListeners) listener(entry.progress)
+}
+
+function finishEntry(roomID: string, entry: UploadEntry, error: string | null, cleanup: () => void) {
+  if (entry.done) return
+  entry.done = true
+  entry.error = error
+  for (const listener of entry.doneListeners) listener(error)
+  cleanup()
+  setTimeout(() => {
+    if (uploads.get(roomID) === entry) uploads.delete(roomID)
+  }, REGISTRY_TTL_MS)
+}
+
+export async function createRoomAndUpload(
+  file: File,
+  nickname: string,
+  onProgress?: (progress: UploadProgress) => void,
+): Promise<UploadResult> {
+  if (mocksEnabled) return mockCreateRoom(nickname)
+  await assertReadable(file)
+  const room = await createRoom(file.name, nickname)
+  startFileUpload(room.id, 0, file, onProgress)
+  return { roomID: room.id, nickname: room.nickname }
+}
+
+export async function createRoomAndUploadTorrent(
+  source: TorrentUploadSource,
+  nickname: string,
+  onProgress?: (progress: UploadProgress) => void,
+): Promise<UploadResult> {
+  if (mocksEnabled) return mockCreateRoom(nickname)
+  const created = await createRoom(source.file.name, nickname)
+  startTorrentUpload(created.id, 0, source, onProgress)
+  return { roomID: created.id, nickname: created.nickname }
+}
+
+export async function createRoomAndUploadYoutube(
+  session: YoutubeSession,
+  nickname: string,
+): Promise<UploadResult> {
+  if (mocksEnabled) return mockCreateRoom(nickname)
+  const created = await createRoom(youtubeFileName(session), nickname, 'youtube')
+  if (session.summary.live) {
+    // The room starts the live once it knows who its controller is: the
+    // producer needs the member's seat, which only the room hands out.
+    saveResumableSource(created.id, { kind: 'live', fileName: youtubeFileName(session), url: session.url })
+    session.destroy()
+    return { roomID: created.id, nickname: created.nickname }
+  }
+  startYoutubeUpload(created.id, 0, session)
+  return { roomID: created.id, nickname: created.nickname }
+}
+
+/** The room's file name for a video: its title, or the id when there is none. */
+export function youtubeFileName(session: YoutubeSession): string {
+  const title = session.summary.title.trim()
+  return (title || session.videoId).slice(0, 200)
+}
+
+/**
+ * Hands the link to its backend. The backend produces the video or nobody
+ * does; progress and readiness then arrive through the room like any
+ * guest's, and a refusal is the room's failure.
+ */
+export function startYoutubeUpload(
+  roomID: string,
+  mediaGeneration: number,
+  session: YoutubeSession,
+  auth?: TorrentAuth,
+): void {
+  releaseExternal(roomID)
+  saveResumableSource(roomID, { kind: 'youtube', fileName: youtubeFileName(session), url: session.url })
+  remoteProductions.delete(roomID)
+  origins.set(roomID, 'youtube')
+  const entry = createEntry(0)
+  uploads.set(roomID, entry)
+  const ownerToken = ownerTokenFor(roomID)
+  const start = mocksEnabled
+    ? Promise.resolve<string | null>(null)
+    : backendFor(session).start(session, { roomId: roomID, mediaGeneration, ownerToken: ownerToken || undefined, auth })
+  void start.then((refusal) => {
+    if (refusal !== null) {
+      lastFailureDetail = refusal
+      finishEntry(roomID, entry, REMUX_UNAVAILABLE, () => session.destroy())
+      return
+    }
+    remoteProductions.add(roomID)
+    lastFailureDetail = null
+    finishEntry(roomID, entry, null, () => undefined)
+  })
+}
+
+export async function createRoomAndUploadUrl(
+  url: string,
+  fileName: string,
+  size: number,
+  nickname: string,
+  sideFiles: RemuxSideFile[] = [],
+): Promise<UploadResult> {
+  if (mocksEnabled) return mockCreateRoom(nickname)
+  const created = await createRoom(fileName, nickname)
+  startUrlUpload(created.id, 0, url, fileName, size, sideFiles)
+  return { roomID: created.id, nickname: created.nickname }
+}
+
+export function startFileUpload(
+  roomID: string,
+  mediaGeneration: number,
+  file: File,
+  onProgress?: (progress: UploadProgress) => void,
+): void {
+  startRoomUpload(roomID, mediaGeneration, { kind: 'file', file }, [], { onProgress })
+}
+
+export interface TorrentAuth {
+  memberId: string
+  capability: string
+}
+
+/**
+ * Hands the torrent to the fleet. The worker produces the video or nobody
+ * does: a refusal is reported as the room's failure, never remuxed here.
+ * Progress and readiness then arrive through the room like any guest's.
+ */
+export function startTorrentUpload(
+  roomID: string,
+  mediaGeneration: number,
+  { file, session }: TorrentUploadSource,
+  onProgress?: (progress: UploadProgress) => void,
+  auth?: TorrentAuth,
+): void {
+  releaseExternal(roomID)
+  torrentSessions.set(roomID, session)
+  if (session.magnet) {
+    saveResumableSource(roomID, { kind: 'torrent', fileName: file.name, magnet: session.magnet, filePath: file.path })
+  }
+  remoteProductions.delete(roomID)
+  origins.set(roomID, 'torrent')
+  const entry = createEntry(file.size)
+  uploads.set(roomID, entry)
+  if (onProgress) entry.progressListeners.add((progress) => onProgress({ phase: 'uploading', pct: progress.pct }))
+  const release = () => {
+    if (torrentSessions.get(roomID) === session) torrentSessions.delete(roomID)
+  }
+  void startRemoteRemux(roomID, mediaGeneration, session, auth).then((refusal) => {
+    if (refusal !== null) {
+      lastFailureDetail = refusal
+      finishEntry(roomID, entry, REMUX_UNAVAILABLE, () => { release(); session.destroy() })
+      return
+    }
+    remoteProductions.add(roomID)
+    lastFailureDetail = null
+    finishEntry(roomID, entry, null, () => { release(); session.detach?.() })
+  })
+}
+
+// Resolves null on an accepted handoff, or with the reason the fleet said no.
+async function startRemoteRemux(
+  roomID: string,
+  mediaGeneration: number,
+  session: TorrentSession,
+  auth?: TorrentAuth,
+): Promise<string | null> {
+  if (mocksEnabled) return null
+  if (!session.jobId) return 'torrent session has no fleet job'
+  const ownerToken = ownerTokenFor(roomID)
+  if (!ownerToken && !auth) return 'no proof of ownership for the room'
+  try {
+    const response = await fetch(`/api/torrents/${encodeURIComponent(session.jobId)}/remux`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        roomId: roomID,
+        mediaGeneration,
+        requestId: crypto.randomUUID(),
+        startMs: 0,
+        auth: ownerToken ? { ownerToken } : auth,
+      }),
+    })
+    if (response.status === 202) return null
+    const body = await response.json().catch(() => ({})) as { error?: string }
+    return `remux refused (${response.status}${body.error ? ` ${body.error}` : ''})`
+  } catch (error) {
+    return `remux request failed: ${error instanceof Error ? error.message : String(error)}`
+  }
+}
+
+export function startUrlUpload(
+  roomID: string,
+  mediaGeneration: number,
+  url: string,
+  fileName: string,
+  size: number,
+  sideFiles: RemuxSideFile[] = [],
+): void {
+  saveResumableSource(roomID, { kind: 'url', fileName, url, size })
+  startRoomUpload(roomID, mediaGeneration, { kind: 'url', url, name: fileName, size }, sideFiles)
+}
+
+interface RoomUploadOptions {
+  onProgress?: (progress: UploadProgress) => void
+  cleanup?: () => void
+}
+
+/**
+ * Remuxes the source here and publishes it into the bucket. Returns at once:
+ * whatever goes wrong is reported by name through the registry.
+ */
+export function startRoomUpload(
+  roomID: string,
+  mediaGeneration: number,
+  source: RemuxSource,
+  sideFiles: RemuxSideFile[],
+  { onProgress, cleanup = () => {} }: RoomUploadOptions = {},
+): void {
+  const job: RemuxJob = { roomID, mediaGeneration, source, sideFiles }
+  releaseExternal(roomID)
+  remoteProductions.delete(roomID)
+  origins.set(roomID, source.kind === 'file' ? 'file' : 'url')
+  const size = sourceSize(source)
+  const entry = createEntry(size)
+  uploads.set(roomID, entry)
+  if (onProgress) entry.progressListeners.add((progress) => onProgress({ phase: 'uploading', pct: progress.pct }))
+  let ownHandle: ClientRemuxHandle | null = null
+  const dropHandle = () => {
+    if (ownHandle && remuxHandles.get(roomID) === ownHandle) remuxHandles.delete(roomID)
+  }
+  const finish = (error: string | null, detail?: string) => {
+    dropHandle()
+    lastFailureDetail = error === null ? null : detail ?? null
+    finishEntry(roomID, entry, error, cleanup)
+  }
+  const movedOn = () => {
+    if (uploads.get(roomID) === entry) uploads.delete(roomID)
+    dropHandle()
+    cleanup()
+  }
+  const onProgressPct = (pct: number) => updateEntry(entry, Math.round((pct / 100) * size))
+
+  if (typeof Worker !== 'undefined' && jobIsCloneable(job)) {
+    const worker = new Worker(new URL('./pipeline/remuxWorker.ts', import.meta.url), { type: 'module' })
+    ownHandle = { follow: (absoluteMs) => worker.postMessage({ type: 'follow', absoluteMs }) }
+    const settle = (fn: () => void) => { fn(); worker.terminate() }
+    worker.onmessage = (event: MessageEvent<{ type: string; pct?: number; code?: string; detail?: string; trace?: SeekTrace }>) => {
+      const message = event.data
+      if (message.type === 'trouble') console.error('[remux-worker]', message.detail)
+      else if (message.type === 'trace' && message.trace) console.info(formatSeekTrace('host', message.trace))
+      else if (message.type === 'progress') onProgressPct(message.pct ?? 0)
+      else if (message.type === 'handle' && ownHandle) remuxHandles.set(roomID, ownHandle)
+      else if (message.type === 'done') settle(() => finish(null))
+      else if (message.type === 'moved-on') settle(movedOn)
+      else if (message.type === 'failed') settle(() => finish(message.code ?? 'upload failed', message.detail))
+    }
+    worker.onerror = (event) => settle(() => finish(event.message || 'upload failed'))
+    worker.postMessage({ type: 'start', job })
+    return
+  }
+
+  void (async () => {
+    const [{ runRemuxJob, PlanFailedError, UnsupportedMediaError }, pipeline] = await Promise.all([
+      import('./pipeline/remuxJob'),
+      import('./pipeline/clientMedia'),
+    ])
+    try {
+      await runRemuxJob(job, {
+        onProgress: onProgressPct,
+        onHandle: (handle) => {
+          ownHandle = handle
+          remuxHandles.set(roomID, handle)
+        },
+      })
+      finish(null)
+    } catch (error) {
+      if (error instanceof pipeline.RoomMovedOnError) { movedOn(); return }
+      const detail = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+      if (error instanceof UnsupportedMediaError) { finish(UNSUPPORTED_MEDIA, error.reason ?? detail); return }
+      if (error instanceof PlanFailedError) {
+        const cause = error.failure
+        const why = cause instanceof Error ? `plan failed: ${cause.name}: ${cause.message}` : `plan failed: ${String(cause)}`
+        finish(readFailureCode(cause, source.kind)
+          ?? (source.kind === 'url' ? SOURCE_UNREACHABLE : UNSUPPORTED_MEDIA), why)
+        return
+      }
+      console.error('client media pipeline failed', error)
+      finish(readFailureCode(error, source.kind) ?? (error instanceof Error ? error.message : 'upload failed'), detail)
+    }
+  })()
+}
+
+// One room prepares at a time in a tab, and only the failure screen asks.
+let lastFailureDetail: string | null = null
+
+export function lastUploadFailureDetail(): string | null {
+  return lastFailureDetail
+}
+
+export function subscribeUploadProgress(roomID: string, callback: (progress: RoomUploadProgress) => void): () => void {
+  const entry = uploads.get(roomID)
+  if (!entry) return () => undefined
+  entry.progressListeners.add(callback)
+  callback(entry.progress)
+  return () => { entry.progressListeners.delete(callback) }
+}
+
+export function subscribeUploadDone(roomID: string, callback: (err: string | null) => void): () => void {
+  const entry = uploads.get(roomID)
+  if (!entry) return () => undefined
+  if (entry.done) {
+    callback(entry.error)
+    return () => undefined
+  }
+  entry.doneListeners.add(callback)
+  return () => { entry.doneListeners.delete(callback) }
+}
