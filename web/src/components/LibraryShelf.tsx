@@ -1,12 +1,18 @@
-import { useCallback, useEffect, useState } from 'react'
-import { Play, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Film, Play, Trash2 } from 'lucide-react'
 import type { Translator } from '../i18n/useT'
 import { forget, library, type LibraryEntry } from '../library'
 import { openTorrent } from '../torrent'
 import { createRoomAndUploadTorrent } from '../upload'
-import { keepTorrent } from '../remoteTorrent'
+import { jobProgress, keepTorrent, type JobProgress } from '../remoteTorrent'
 import { useToast } from '../ui/toastContext'
 import { StoragePicker } from './StoragePicker'
+
+const POLL_MS = 3000
+
+function gigabytes(bytes: number): string {
+  return `${(bytes / 1_073_741_824).toFixed(bytes < 1_073_741_824 ? 2 : 1)} GB`
+}
 
 /**
  * What this browser has kept on disk, and the way back into it.
@@ -30,6 +36,33 @@ export function LibraryShelf({ t, onOpened }: {
 
   const refresh = useCallback(() => setEntries(library()), [])
   useEffect(refresh, [refresh])
+
+  // Um download que ainda esta andando nao tem por que parecer pronto. Enquanto
+  // houver algum incompleto, perguntamos ao worker de tres em tres segundos; no
+  // instante em que todos chegarem ao fim, paramos de perguntar.
+  const [progress, setProgress] = useState<Record<string, JobProgress>>({})
+  const jobIds = entries.map((entry) => entry.jobId).join(',')
+  const stop = useRef(false)
+  useEffect(() => {
+    if (jobIds === '') return
+    stop.current = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const look = async () => {
+      const ids = jobIds.split(',')
+      const answers = await Promise.all(ids.map((id) => jobProgress(id)))
+      if (stop.current) return
+      const next: Record<string, JobProgress> = {}
+      ids.forEach((id, n) => { const answer = answers[n]; if (answer) next[id] = answer })
+      setProgress(next)
+      const done = Object.values(next).every((one) => one.progress !== null && one.progress >= 1)
+      if (!done) timer = setTimeout(() => { void look() }, POLL_MS)
+    }
+    void look()
+    return () => {
+      stop.current = true
+      if (timer !== null) clearTimeout(timer)
+    }
+  }, [jobIds])
 
   const open = async (entry: LibraryEntry) => {
     if (!entry.magnet) {
@@ -85,9 +118,19 @@ export function LibraryShelf({ t, onOpened }: {
         {entries.map((entry) => (
           <li key={entry.roomId} className="library-card">
             {entry.poster
-              ? <img className="library-poster" src={entry.poster} alt="" />
-              : <span className="library-poster is-blank" aria-hidden="true" />}
-            <span className="library-name">{entry.title || entry.fileName}</span>
+              ? <img className="library-poster" src={entry.poster} alt="" loading="lazy" />
+              : (
+                <span className="library-poster is-blank" aria-hidden="true">
+                  <Film size={22} />
+                </span>
+              )}
+            <div className="library-body">
+              <span className="library-name" title={entry.title || entry.fileName}>
+                {entry.title || entry.fileName}
+              </span>
+              {entry.title ? <span className="library-file">{entry.fileName}</span> : null}
+              <LibraryProgress entry={entry} at={progress[entry.jobId]} t={t} />
+            </div>
             <div className="library-actions">
               <button
                 type="button"
@@ -112,5 +155,41 @@ export function LibraryShelf({ t, onOpened }: {
         ))}
       </ul>
     </div>
+  )
+}
+
+/**
+ * A linha de baixo de cada cartao: quanto ja chegou, ou o tamanho no disco
+ * quando acabou. Sem resposta do worker ela nao aparece — dizer "0%" quando na
+ * verdade nao se sabe e pior que nao dizer nada.
+ */
+function LibraryProgress({ entry, at, t }: { entry: LibraryEntry; at?: JobProgress; t: Translator }) {
+  if (!at) return <span className="library-line is-quiet">{t('library.checking')}</span>
+  if (at.progress === null) return <span className="library-line is-quiet">{t('library.checking')}</span>
+
+  const pct = Math.round(at.progress * 100)
+  if (pct >= 100) {
+    return (
+      <span className="library-line is-done">
+        {t('library.complete')}
+        {at.totalBytes > 0 ? <em>{gigabytes(at.totalBytes)}</em> : null}
+      </span>
+    )
+  }
+  return (
+    <span className="library-line">
+      <span
+        className="library-bar"
+        role="progressbar"
+        aria-label={entry.title || entry.fileName}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={pct}
+      >
+        <span style={{ width: `${pct}%` }} />
+      </span>
+      <em>{pct}%</em>
+      {at.totalBytes > 0 ? <em className="is-quiet">{gigabytes(at.haveBytes)} / {gigabytes(at.totalBytes)}</em> : null}
+    </span>
   )
 }

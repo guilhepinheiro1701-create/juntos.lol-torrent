@@ -161,6 +161,40 @@ export async function torrentKept(jobId: string): Promise<KeptState> {
   }
 }
 
+/**
+ * Quanto do filme ja esta no disco do worker, e se ele esta marcado para ficar.
+ *
+ * `haveBytes` sobre `selectedBytes` e a conta certa: o que importa e o arquivo
+ * escolhido, nao o torrent inteiro, que pode trazer extras que ninguem pediu.
+ */
+export interface JobProgress {
+  kept: KeptState
+  /** 0 a 1, ou null enquanto o worker ainda nao sabe o tamanho. */
+  progress: number | null
+  haveBytes: number
+  totalBytes: number
+  downSpeed: number
+  state: string
+}
+
+export async function jobProgress(jobId: string): Promise<JobProgress | null> {
+  try {
+    const job = await api<JobStatus & { keep?: boolean }>(`/${encodeURIComponent(jobId)}?only=swarm`)
+    const have = job.swarm?.haveBytes ?? 0
+    const total = job.swarm?.selectedBytes ?? 0
+    return {
+      kept: job.keep === true ? 'kept' : 'released',
+      progress: total > 0 ? Math.min(1, have / total) : null,
+      haveBytes: have,
+      totalBytes: total,
+      downSpeed: job.swarm?.downSpeed ?? 0,
+      state: job.state,
+    }
+  } catch {
+    return null
+  }
+}
+
 export async function keepTorrent(jobId: string, keep: boolean): Promise<void> {
   await api(`/${encodeURIComponent(jobId)}/keep`, {
     method: 'POST',

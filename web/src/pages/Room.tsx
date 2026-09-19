@@ -60,7 +60,7 @@ import {
   torrentJobFor,
 } from '../upload'
 import { expectedPositionMs } from '../player/position'
-import { keepTorrent, reportPosition, torrentKept } from '../remoteTorrent'
+import { jobProgress, keepTorrent, reportPosition, torrentKept } from '../remoteTorrent'
 import { forget, libraryEntry, remember } from '../library'
 import type { TorrentStats } from '../torrent'
 
@@ -624,6 +624,17 @@ function KeepButton({ roomId, fileName, nowPlaying, t }: {
     return () => window.clearInterval(timer)
   }, [jobId, roomId])
 
+  const record = useCallback(() => {
+    const source = resumableSourceFor(roomId)
+    remember({
+      roomId, jobId, fileName,
+      title: nowPlaying?.name,
+      poster: nowPlaying?.poster,
+      magnet: source?.magnet,
+      filePath: source?.filePath,
+    })
+  }, [fileName, jobId, nowPlaying?.name, nowPlaying?.poster, roomId])
+
   useEffect(() => {
     if (!jobId) return
     let disposed = false
@@ -635,12 +646,45 @@ function KeepButton({ roomId, fileName, nowPlaying, t }: {
       // lapsed session looks like, and the bytes may well still be there.
       if (state === 'unknown') return
       setKept(state === 'kept')
-      if (state === 'released') forget(roomId)
+      if (state === 'released') {
+        forget(roomId)
+      } else if (!libraryEntry(roomId)) {
+        // Marcado sem passar por este botao — e o que a tela de comecar faz
+        // quando se escolhe "Baixar o filme inteiro". O worker ja esta
+        // guardando o arquivo, e sem esta linha ele nunca aparecia em
+        // Baixados: um download invisivel, que e o mesmo que nenhum.
+        record()
+      }
     })
     return () => { disposed = true }
-  }, [jobId, roomId])
+  }, [jobId, record, roomId])
+
+  // Enquanto o filme inteiro esta sendo guardado, o botao diz quanto ja chegou.
+  // Sem isso, "Baixado" aparecia no segundo em que se apertava, com o arquivo
+  // ainda a caminho — uma promessa que o disco ainda nao tinha como cumprir.
+  const [done, setDone] = useState<number | null>(null)
+  useEffect(() => {
+    if (!jobId || kept !== true) { setDone(null); return }
+    let disposed = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const look = async () => {
+      const at = await jobProgress(jobId)
+      if (disposed) return
+      setDone(at?.progress ?? null)
+      if (!at || at.progress === null || at.progress < 1) {
+        timer = setTimeout(() => { void look() }, 3000)
+      }
+    }
+    void look()
+    return () => {
+      disposed = true
+      if (timer !== null) clearTimeout(timer)
+    }
+  }, [jobId, kept])
 
   if (!jobId) return null
+
+  const pct = done !== null && done < 1 ? Math.round(done * 100) : null
 
   const toggle = async () => {
     const next = !kept
@@ -654,13 +698,7 @@ function KeepButton({ roomId, fileName, nowPlaying, t }: {
       return
     }
     if (next) {
-      remember({
-        roomId, jobId, fileName,
-        title: nowPlaying?.name,
-        poster: nowPlaying?.poster,
-        magnet: resumableSourceFor(roomId)?.magnet,
-        filePath: resumableSourceFor(roomId)?.filePath,
-      })
+      record()
     } else {
       forget(roomId)
     }
@@ -672,7 +710,9 @@ function KeepButton({ roomId, fileName, nowPlaying, t }: {
   return (
     <IconButton
       icon={kept ? <HardDriveDownload size={16} /> : <Download size={16} />}
-      label={t(kept ? 'room.keptLabel' : 'room.keepLabel')}
+      label={pct !== null
+        ? t('room.keepProgress').replace('{n}', String(pct))
+        : t(kept ? 'room.keptLabel' : 'room.keepLabel')}
       className={kept ? 'is-confirmed' : ''}
       disabled={working || kept === null}
       onClick={() => { void toggle() }}

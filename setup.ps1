@@ -209,4 +209,7 @@ Write-Host '  ==========================================================' -Foreg
 Write-Host ''
 Nota 'O start abre o site sozinho no navegador, em http://localhost:8099'
 Nota 'Para desligar, stop.bat. Fechar a janela nao desliga.'
+Write-Host ''
+Nota 'Quer escolher em que pasta do seu computador os filmes ficam? Rode'
+Nota 'pasta.bat. Sem ele, tudo vai para um volume do proprio Docker.'
 Fim 0

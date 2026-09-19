@@ -43,7 +43,10 @@ nele: normalmente leva segundos, e só demora quando o código realmente mudou.
 Se algo morrer no caminho, ele mostra as últimas linhas do servidor ali mesmo,
 em vez de mandar você procurá-las.
 
-**4. `stop.bat`** para desligar. Fechar a janela do `start` **não** desliga:
+**4. `pasta.bat`** escolhe em que pasta do seu computador os filmes ficam.
+Opcional: sem ele, tudo vai para um volume do Docker.
+
+**5. `stop.bat`** para desligar. Fechar a janela do `start` **não** desliga:
 as caixas continuam rodando em segundo plano de propósito, para o site seguir
 disponível.
 
@@ -91,32 +94,48 @@ Tudo publica em `127.0.0.1` de propósito. **Não exponha isto na internet:** n�
 
 A porta **4240** (TCP e UDP) é a única que o roteador precisa deixar entrar, e só para o torrent achar peers. **Abra à mão no roteador:** de dentro de um container, o pedido automático (UPnP) fala com o Docker, não com o seu roteador, então não adianta.
 
-## Escolher em que disco os filmes ficam
+## Escolher em que pasta os filmes ficam
 
-Por padrão tudo vai para um volume do Docker. Para usar discos seus, duas edições:
+**Clique em `pasta.bat`** (ou `./pasta.sh`). Ele pergunta o caminho — por
+exemplo `E:\Filmes` —, cria a pasta se ela não existir, confere que dá para
+escrever nela e escreve a configuração sozinho. Depois, `stop.bat` e
+`start.bat`.
 
-**1. Monte os caminhos** no `docker-compose.yml`, no serviço `worker`:
+Não é preciso abrir nenhum `.yml`.
+
+> **Por que isto não é um botão dentro do site.** O baixador roda num
+> container, e um container só enxerga as pastas que foram montadas nele.
+> Abrir uma pasta nova exige recriar o container, coisa que a página não pode
+> fazer — e não deveria: dar ao site o poder de montar pastas suas seria dar a
+> ele a máquina inteira. A escolha é feita uma vez aqui, e daí em diante o site
+> mostra a pasta e deixa escolher entre as que existem.
+
+O que já foi baixado antes continua onde estava; nada é movido.
+
+### Mais de uma pasta
+
+Para dois ou mais discos ao mesmo tempo, aí sim é edição à mão. No
+`docker-compose.override.yml`, no serviço `worker`:
 
 ```yaml
+services:
+  worker:
     volumes:
       - juntos-worker:/var/lib/ss-worker
-      - /mnt/ssd/juntos:/discos/ssd      # Linux/macOS
-      - /mnt/hdd/juntos:/discos/hdd
-      # No Windows: - D:\juntos:/discos/hdd
+      - "E:/Filmes:/discos/filmes"
+      - "D:/Series:/discos/series"
 ```
 
-**2. Nomeie-os** no `.env.local`:
+E no `.env.local`:
 
 ```
-WORKER_STORAGE_DIRS=SSD=/discos/ssd,HDD=/discos/hdd
+WORKER_STORAGE_DIRS=Filmes=/discos/filmes,Series=/discos/series
 ```
 
-Os caminhos são sempre os de **dentro** do container. A escolha aparece na
-tela de **começar**, logo depois de escolher o filme e antes de baixar
-qualquer coisa, com o espaço livre de cada disco. Mesmo com um só disco a
-caixa aparece, dizendo onde o filme vai parar.
-
-O rótulo é o que a página manda; o caminho nunca sai do worker. Um rótulo que a instalação não declarou é recusado.
+Os caminhos depois dos dois-pontos são os de **dentro** do container. Com dois
+ou mais, a escolha aparece na tela de começar, com o espaço livre de cada um.
+O rótulo é o que a página manda; o caminho nunca sai do worker, e um rótulo que
+a instalação não declarou é recusado.
 
 ## Os dois modos de assistir
 

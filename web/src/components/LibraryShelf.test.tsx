@@ -5,11 +5,15 @@ import { LibraryShelf } from './LibraryShelf'
 import { ToastProvider } from '../ui/Toast'
 import { openTorrent } from '../torrent'
 import { createRoomAndUploadTorrent } from '../upload'
-import { keepTorrent } from '../remoteTorrent'
+import { jobProgress, keepTorrent } from '../remoteTorrent'
 
 vi.mock('../torrent', () => ({ openTorrent: vi.fn() }))
 vi.mock('../upload', () => ({ createRoomAndUploadTorrent: vi.fn() }))
-vi.mock('../remoteTorrent', () => ({ keepTorrent: vi.fn(), storagePlaces: vi.fn().mockResolvedValue([]) }))
+vi.mock('../remoteTorrent', () => ({
+  keepTorrent: vi.fn(),
+  jobProgress: vi.fn().mockResolvedValue(null),
+  storagePlaces: vi.fn().mockResolvedValue([]),
+}))
 
 const t = ((key: string) => key) as Translator
 
@@ -28,6 +32,7 @@ beforeEach(() => {
   localStorage.clear()
   vi.clearAllMocks()
   vi.mocked(keepTorrent).mockResolvedValue(undefined)
+  vi.mocked(jobProgress).mockResolvedValue(null)
 })
 
 afterEach(() => vi.restoreAllMocks())
@@ -122,5 +127,56 @@ describe('LibraryShelf', () => {
 
     await waitFor(() => expect(screen.getByText('library.emptyTitle')).toBeInTheDocument())
     expect(JSON.parse(localStorage.getItem('ss.library')!)).toHaveLength(0)
+  })
+})
+
+const GB = 1_073_741_824
+
+// Um download pela metade nao tem por que parecer pronto: e a pergunta que a
+// pessoa faz ao abrir esta aba, e a resposta estava faltando.
+describe('how far along each download is', () => {
+  const at = (over: Record<string, unknown> = {}) => ({
+    kept: 'kept' as const, progress: 0.42, haveBytes: 4.2 * GB,
+    totalBytes: 10 * GB, downSpeed: 0, state: 'running', ...over,
+  })
+
+  it('shows the percentage and the bytes while it is still coming', async () => {
+    localStorage.setItem('ss.library', JSON.stringify([entry()]))
+    vi.mocked(jobProgress).mockResolvedValue(at())
+    shelf()
+
+    expect(await screen.findByText('42%')).toBeInTheDocument()
+    const bar = screen.getByRole('progressbar', { name: 'Duna' })
+    expect(bar).toHaveAttribute('aria-valuenow', '42')
+    // O texto sai em nos separados, entao a asercao e sobre o elemento.
+    expect(document.querySelector('.library-line .is-quiet')).toHaveTextContent('4.2 GB / 10.0 GB')
+  })
+
+  it('says it is complete once everything is on disk', async () => {
+    localStorage.setItem('ss.library', JSON.stringify([entry()]))
+    vi.mocked(jobProgress).mockResolvedValue(at({ progress: 1, haveBytes: 10 * GB }))
+    shelf()
+
+    expect(await screen.findByText('library.complete')).toBeInTheDocument()
+    expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
+  })
+
+  // Dizer "0%" quando na verdade nao se sabe e pior que nao dizer nada.
+  it('admits it does not know rather than showing a zero', async () => {
+    localStorage.setItem('ss.library', JSON.stringify([entry()]))
+    vi.mocked(jobProgress).mockResolvedValue(at({ progress: null }))
+    shelf()
+
+    expect(await screen.findByText('library.checking')).toBeInTheDocument()
+    expect(screen.queryByText('0%')).not.toBeInTheDocument()
+  })
+
+  it('names the film and keeps the file name underneath', () => {
+    localStorage.setItem('ss.library', JSON.stringify([entry({ poster: 'https://img.test/duna.jpg' })]))
+    shelf()
+
+    expect(screen.getByText('Duna')).toBeInTheDocument()
+    expect(screen.getByText('Duna.mkv')).toBeInTheDocument()
+    expect(document.querySelector('.library-poster')).toHaveAttribute('src', 'https://img.test/duna.jpg')
   })
 })

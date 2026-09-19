@@ -61,3 +61,5 @@ say "=========================================================="
 say "  Pronto. Daqui em diante é só rodar ./start.sh"
 say "=========================================================="
 echo
+echo
+echo "  Para escolher em que pasta os filmes ficam: ./pasta.sh"
