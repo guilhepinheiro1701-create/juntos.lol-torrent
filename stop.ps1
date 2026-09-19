@@ -7,7 +7,7 @@ Write-Host ''
 Write-Host '  Desligando o juntos.lol...' -ForegroundColor Gray
 Write-Host ''
 
-& docker compose -f docker-compose.local.yml --env-file .env.local stop
+& docker compose --env-file .env.local stop
 
 Write-Host ''
 Write-Host '  Desligado.' -ForegroundColor Green

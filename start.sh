@@ -7,7 +7,7 @@ cd "$(dirname "$0")"
 echo
 echo "  Subindo o juntos.lol..."
 echo
-docker compose -f docker-compose.local.yml --env-file .env.local up -d
+docker compose --env-file .env.local up -d
 
 # Abrir o navegador antes de o servidor responder mostra um erro que assusta
 # sem motivo.
@@ -28,6 +28,6 @@ done
 echo
 echo "  [!] O servidor ainda não respondeu. Os containers estão de pé, então"
 echo "      provavelmente é só demora. Veja com:"
-echo "        docker compose -f docker-compose.local.yml logs -f app"
+echo "        docker compose logs -f app"
 echo
 exit 1

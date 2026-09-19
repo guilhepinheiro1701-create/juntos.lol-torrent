@@ -58,10 +58,31 @@ if (-not $docker) {
     Fim 1
 }
 
-Passo 'Perguntando ao Docker se ele esta de pe (pode levar ate um minuto)...'
-$servidor = (& docker version --format '{{.Server.Version}}' 2>$null | Select-Object -First 1)
-if ($LASTEXITCODE -ne 0 -or -not $servidor) {
-    Erro 'O Docker esta instalado, mas nao esta respondendo.'
+# A pergunta e feita com o resultado ja em memoria, e nunca com
+# `| Select-Object -First 1` no meio de um comando externo: esse cmdlet encerra
+# o cano assim que tem o que queria, o que mata o docker.exe antes da hora e
+# faz o codigo de saida parecer erro com o Docker perfeitamente de pe. Foi
+# exatamente isso que quebrou a versao anterior deste script.
+function VersaoDoMotor {
+    $saida = @(& docker version --format '{{.Server.Version}}' 2>&1)
+    $codigo = $LASTEXITCODE
+    $texto = @($saida | ForEach-Object { "$_" } | Where-Object { $_.Trim() -ne '' })
+    if ($codigo -eq 0 -and $texto.Count -gt 0) { return $texto[0].Trim() }
+    return $null
+}
+
+# O Docker Desktop costuma levar um tempo depois de aberto. Em vez de desistir
+# na primeira tentativa, esperamos um pouco, que e o que a pessoa faria.
+$servidor = $null
+foreach ($tentativa in 1..6) {
+    Passo "Perguntando ao Docker se ele esta de pe (tentativa $tentativa de 6)..."
+    $servidor = VersaoDoMotor
+    if ($servidor) { break }
+    if ($tentativa -lt 6) { Start-Sleep -Seconds 5 }
+}
+
+if (-not $servidor) {
+    Erro 'O Docker esta instalado, mas o motor dele nao respondeu.'
     Write-Host ''
     Nota 'Quase sempre e so ele ainda nao ter terminado de subir.'
     Write-Host ''
@@ -69,19 +90,44 @@ if ($LASTEXITCODE -ne 0 -or -not $servidor) {
     Nota '2. Espere o painel dizer "Engine running" (a baleia para de animar).'
     Nota '3. Rode este setup de novo.'
     Write-Host ''
-    Nota 'Se ele reclamar do WSL 2, aceite instalar o que ele pedir e reinicie.'
+    Nota 'Se ele reclamar do WSL 2, aceite instalar o que pedir e reinicie.'
     Write-Host ''
-    Nota 'Se continuar, veja o que ele responde rodando: docker version'
+    Nota 'Para ver o que ele responde, abra o Prompt de Comando e rode:'
+    Nota '  docker version'
     Fim 1
 }
 Ok "Docker de pe (motor $servidor)."
 
-# O compose v2 e um subcomando; instalacoes antigas tem o docker-compose
-# separado, que nao serve aqui.
-& docker compose version 2>$null | Out-Null
+# O compose v2 e um subcomando. Instalacoes antigas tem um docker-compose
+# separado, com hifen, que nao serve aqui.
+& docker compose version 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Erro 'Este Docker nao tem o "compose" embutido.'
     Nota 'Atualize o Docker Desktop para uma versao recente e rode de novo.'
+    Fim 1
+}
+
+# Uma tentativa anterior pode ter subido os containers com o arquivo de nuvem,
+# que nao funciona aqui: ele pede credenciais da Cloudflare. Eles ficam
+# reiniciando em looping e confundem quem olha o Docker Desktop.
+# O docker deriva o nome do projeto da pasta: minusculas, e fora tudo que nao
+# for letra, numero, hifen ou sublinhado. "juntos.lol-torrent" vira
+# "juntoslol-torrent": o ponto cai, o hifen fica.
+$pasta = Split-Path -Leaf $PSScriptRoot
+$projetoErrado = ($pasta.ToLower() -replace '[^a-z0-9_-]', '')
+$projetos = @(& docker compose ls --all --format json 2>&1 | ForEach-Object { "$_" })
+if ($projetos -join '' -match [regex]::Escape($projetoErrado)) {
+    Write-Host ''
+    Aviso 'Achei containers de uma tentativa anterior, com o arquivo errado.'
+    Nota 'Eles ficam reiniciando e reclamando de R2_ACCESS_KEY_ID e de'
+    Nota 'SS_WORKER_TLS. Sao da versao de nuvem, que precisa de credenciais da'
+    Nota 'Cloudflare e nao roda aqui.'
+    Write-Host ''
+    Nota 'Remova-os antes de continuar, no Prompt de Comando, nesta pasta:'
+    Nota "  docker compose -p $projetoErrado down"
+    Write-Host ''
+    Nota 'Isso apaga so os containers; nada que voce tenha baixado se perde.'
+    Nota 'Depois rode este setup de novo.'
     Fim 1
 }
 
@@ -120,7 +166,7 @@ if (Test-Path -LiteralPath '.env.local') {
         '# Mais de um disco? Liste como rotulo=caminho, separados por virgula:'
         '#   WORKER_STORAGE_DIRS=SSD=/discos/ssd,HDD=/discos/hdd'
         '# Os caminhos sao de DENTRO do container, entao monte-os antes em'
-        '# docker-compose.local.yml, no bloco volumes do servico worker.'
+        '# docker-compose.yml, no bloco volumes do servico worker.'
         '# Com dois ou mais, a aba Baixados passa a mostrar a escolha.'
         'WORKER_STORAGE_DIRS='
     )
@@ -216,7 +262,7 @@ Write-Host ''
 Nota 'Vai aparecer muito texto. Isso e normal. Deixe a janela aberta.'
 Write-Host ''
 
-& docker compose -f docker-compose.local.yml --env-file .env.local build
+& docker compose --env-file .env.local build
 if ($LASTEXITCODE -ne 0) {
     Write-Host ''
     Erro 'A montagem falhou. O motivo esta no texto acima.'

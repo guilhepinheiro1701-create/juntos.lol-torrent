@@ -25,21 +25,23 @@ if (-not (Test-Path -LiteralPath '.env.local')) {
     Fim 1
 }
 
-& docker version --format '{{.Server.Version}}' 2>$null | Out-Null
+# Sem `| Select-Object` no meio de um comando externo: esse cmdlet encerra o
+# cano cedo e mata o docker.exe, fazendo o codigo de saida mentir.
+$saida = @(& docker version --format '{{.Server.Version}}' 2>&1)
 if ($LASTEXITCODE -ne 0) {
     Erro 'O Docker Desktop nao esta rodando.'
-    Nota 'Abra ele pelo menu Iniciar, espere dizer "Engine running", e tente'
-    Nota 'de novo.'
+    Nota 'Abra ele pelo menu Iniciar, espere o painel dizer "Engine running",'
+    Nota 'e tente de novo.'
     Fim 1
 }
 
 Passo 'Subindo...'
-& docker compose -f docker-compose.local.yml --env-file .env.local up -d
+& docker compose --env-file .env.local up -d
 if ($LASTEXITCODE -ne 0) {
     Write-Host ''
     Erro 'Nao subiu. O motivo esta no texto acima.'
     Nota 'Para ver o que cada parte diz:'
-    Nota '  docker compose -f docker-compose.local.yml logs -f app'
+    Nota '  docker compose logs -f app'
     Fim 1
 }
 
@@ -62,7 +64,7 @@ if (-not $pronto) {
     Erro 'O servidor ainda nao respondeu depois de 80 segundos.'
     Nota 'As caixas estao de pe, entao costuma ser so demora na primeira vez.'
     Nota 'Veja o que ele esta fazendo com:'
-    Nota '  docker compose -f docker-compose.local.yml logs -f app'
+    Nota '  docker compose logs -f app'
     Fim 1
 }
 

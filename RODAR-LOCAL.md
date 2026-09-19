@@ -91,7 +91,7 @@ A porta **4240** (TCP e UDP) é a única que o roteador precisa deixar entrar, e
 
 Por padrão tudo vai para um volume do Docker. Para usar discos seus, duas edições:
 
-**1. Monte os caminhos** no `docker-compose.local.yml`, no serviço `worker`:
+**1. Monte os caminhos** no `docker-compose.yml`, no serviço `worker`:
 
 ```yaml
     volumes:
@@ -123,11 +123,11 @@ Sem internet, a aba do catálogo diz isso e leva para os Baixados. O catálogo p
 
 ```sh
 # o que cada container está dizendo
-docker compose -f docker-compose.local.yml logs -f app
-docker compose -f docker-compose.local.yml logs -f worker
+docker compose logs -f app
+docker compose logs -f worker
 
 # o estado de todos
-docker compose -f docker-compose.local.yml ps
+docker compose ps
 ```
 
 **O vídeo não toca e o console mostra 403 no `PUT`.** É o `juntos-minio` não resolvendo. Confira a linha no arquivo hosts.
@@ -139,7 +139,7 @@ docker compose -f docker-compose.local.yml ps
 ## Apagar tudo
 
 ```sh
-docker compose -f docker-compose.local.yml down -v
+docker compose down -v
 ```
 
 O `-v` leva os volumes junto: filmes baixados, salas e bucket. Sem ele, só os containers somem.

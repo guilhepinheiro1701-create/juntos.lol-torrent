@@ -46,7 +46,7 @@ WORKER_DISK_QUOTA_GB=35
 # Mais de um disco? Liste como rótulo=caminho, separados por vírgula:
 #   WORKER_STORAGE_DIRS=SSD=/discos/ssd,HDD=/discos/hdd
 # Os caminhos são de dentro do container, então monte-os antes em
-# docker-compose.local.yml, no bloco \`volumes\` do serviço \`worker\`.
+# docker-compose.yml, no bloco \`volumes\` do serviço \`worker\`.
 # Com dois ou mais, a aba Baixados mostra a escolha.
 WORKER_STORAGE_DIRS=
 ENV
@@ -69,7 +69,7 @@ echo
 say "[..] Montando as imagens. A primeira vez demora bastante: compila o"
 say "     servidor em Go, o worker em Rust e o site."
 echo
-docker compose -f docker-compose.local.yml --env-file .env.local build
+docker compose --env-file .env.local build
 
 echo
 say "=========================================================="
