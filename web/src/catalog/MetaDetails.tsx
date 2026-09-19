@@ -13,6 +13,7 @@ import { fetchMeta, type MetaDetail, type MetaVideo } from './tmdb'
 import { isPlayable, streamKey, type CatalogStream, type StreamResolution, type StreamTarget } from './streams'
 import { resolveStreams } from '../plugins/resolve'
 import type { TitleOpen } from './PosterCard'
+import { Badge } from '@/components/ui/badge'
 
 const CARD_RADIUS = '14px'
 const MORPH_EASE: [number, number, number, number] = [0.77, 0, 0.175, 1]
@@ -536,10 +537,12 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onOpenPl
                     >
                       <span className="stream-label">{stream.label}</span>
                       <span className="stream-meta">
-                        <span className="stream-quality">{stream.quality}</span>
+                        {/* A pastilha da qualidade so existe quando ha o que
+                            dizer: vazia, ela era uma mancha laranja sem texto. */}
+                        {stream.quality ? <Badge className="stream-quality">{stream.quality}</Badge> : null}
                         {stream.languages.length > 0 ? <span className="stream-langs">{stream.languages.slice(0, 6).join(' ')}</span> : null}
-                        {stream.seeders !== null ? <span>{stream.seeders} seeds</span> : null}
-                        {stream.size ? <span>{stream.size}</span> : null}
+                        {stream.seeders !== null ? <Badge variant="secondary">{t('details.seeds').replace('{n}', String(stream.seeders))}</Badge> : null}
+                        {stream.size ? <Badge variant="outline">{stream.size}</Badge> : null}
                         {stream.source ? <span className="stream-source">{stream.source}</span> : null}
                       </span>
                     </button>

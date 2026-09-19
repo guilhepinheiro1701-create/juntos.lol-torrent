@@ -237,6 +237,7 @@ export const en: Record<string, string> = {
   'home.cancel': 'Cancel',
 
   'details.quality': 'Quality',
+  'details.seeds': '{n} seeds',
   'details.allQualities': 'All qualities',
   'details.language': 'Language',
   'details.allLanguages': 'Any language',

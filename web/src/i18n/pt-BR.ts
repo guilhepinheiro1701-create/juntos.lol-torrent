@@ -237,6 +237,7 @@ export const ptBR: Record<string, string> = {
   'home.cancel': 'Cancelar',
 
   'details.quality': 'Qualidade',
+  'details.seeds': '{n} seeds',
   'details.allQualities': 'Todas as qualidades',
   'details.language': 'Idioma',
   'details.allLanguages': 'Qualquer idioma',
