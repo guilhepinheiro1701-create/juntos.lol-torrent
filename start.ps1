@@ -36,7 +36,10 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Passo 'Subindo...'
-& docker compose --env-file .env.local up -d
+# --remove-orphans limpa o que uma versao anterior deixou de pe e esta
+# pilha nao usa mais: o MinIO e o criador do bucket sairam quando os
+# segmentos passaram a morar numa pasta do proprio servidor.
+& docker compose --env-file .env.local up -d --remove-orphans
 if ($LASTEXITCODE -ne 0) {
     Write-Host ''
     Erro 'Nao subiu. O motivo esta no texto acima.'

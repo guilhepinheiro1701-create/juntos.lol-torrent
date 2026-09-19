@@ -7,7 +7,10 @@ cd "$(dirname "$0")"
 echo
 echo "  Subindo o juntos.lol..."
 echo
-docker compose --env-file .env.local up -d
+# --remove-orphans limpa o que uma versão anterior deixou de pé e esta pilha
+# não usa mais: o MinIO e o criador do bucket saíram quando os segmentos
+# passaram a morar numa pasta do próprio servidor.
+docker compose --env-file .env.local up -d --remove-orphans
 
 # Abrir o navegador antes de o servidor responder mostra um erro que assusta
 # sem motivo.
