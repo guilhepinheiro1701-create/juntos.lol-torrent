@@ -6,6 +6,12 @@ import { playJLocalChime } from '../ui/chime'
 export const JLOCAL_ORIGIN = 'http://127.0.0.1:40392'
 const PROBE_TIMEOUT_MS = 1500
 const POLL_MS = 10000
+// Quem não tem o jlocal instalado — que é o caso de quem roda tudo na própria
+// máquina — via uma linha vermelha no console a cada dez segundos, para sempre.
+// Centenas delas escondem os erros que importam. Depois de algumas tentativas
+// sem resposta, o intervalo cresce; uma resposta devolve o ritmo normal.
+const BACKOFF_AFTER = 3
+const MAX_POLL_MS = 5 * 60 * 1000
 
 export interface JLocalSnapshot {
   connected: boolean
@@ -17,8 +23,10 @@ export interface JLocalSnapshot {
 const initial: JLocalSnapshot = { connected: false, version: null, connecting: false, modalOpen: false }
 let snapshot: JLocalSnapshot = initial
 const listeners = new Set<() => void>()
-let pollTimer: ReturnType<typeof setInterval> | null = null
+let pollTimer: ReturnType<typeof setTimeout> | null = null
+let polling = false
 let probeEpoch = 0
+let misses = 0
 
 function emit(next: JLocalSnapshot): void {
   snapshot = next
@@ -50,15 +58,35 @@ async function refresh(manual: boolean): Promise<void> {
   if (epoch !== probeEpoch) return
   const was = snapshot.connected
   const connected = version !== null
+  misses = connected ? 0 : misses + 1
   emit({ ...snapshot, connected, version, connecting: false })
   if (connected && !was) playJLocalChime()
 }
 
+/** Dez segundos enquanto vale a pena perguntar; depois, o dobro a cada falha. */
+function nextDelay(): number {
+  if (misses <= BACKOFF_AFTER) return POLL_MS
+  return Math.min(MAX_POLL_MS, POLL_MS * 2 ** (misses - BACKOFF_AFTER))
+}
+
+// `polling` e nao `pollTimer !== null`: entre o disparo e o reagendamento o
+// timer e nulo, e um assinante que chegasse nessa fresta abriria uma segunda
+// corrente perguntando em paralelo com a primeira.
 function ensurePolling(): void {
-  if (pollTimer !== null) return
-  pollTimer = setInterval(() => { void refresh(false) }, POLL_MS)
-  const unref = (pollTimer as unknown as { unref?: () => void }).unref
-  if (typeof unref === 'function') unref.call(pollTimer)
+  if (polling) return
+  polling = true
+  const tick = () => {
+    pollTimer = setTimeout(() => {
+      void refresh(false).finally(() => {
+        pollTimer = null
+        if (listeners.size > 0) tick()
+        else polling = false
+      })
+    }, nextDelay())
+    const unref = (pollTimer as unknown as { unref?: () => void }).unref
+    if (typeof unref === 'function') unref.call(pollTimer)
+  }
+  tick()
 }
 
 export function subscribeJLocal(listener: () => void): () => void {
@@ -74,6 +102,8 @@ export function getJLocalSnapshot(): JLocalSnapshot {
 
 /** Manual attempt from the "Connect to J Local" button. Never throws. */
 export function connectJLocal(): void {
+  // Pedir à mão zera a espera: a pessoa acabou de dizer que ele deve estar lá.
+  misses = 0
   void refresh(true)
 }
 
@@ -85,6 +115,12 @@ export function setJLocalModal(open: boolean): void {
 export function resetJLocalForTests(): void {
   probeEpoch += 1
   snapshot = initial
+  misses = 0
+  polling = false
+  if (pollTimer !== null) {
+    clearTimeout(pollTimer)
+    pollTimer = null
+  }
 }
 
 export function useJLocal(): JLocalSnapshot & { connect: () => void; setModal: (open: boolean) => void } {

@@ -10,7 +10,7 @@ const TRACKERS = [
 export type StreamResolution = '2160p' | '1080p' | '720p' | 'sd'
 
 export type StreamLocation =
-  | { kind: 'torrent'; infoHash: string; fileIdx: number | null; fileName: string }
+  | { kind: 'torrent'; infoHash: string; fileIdx: number | null; fileName: string; trackers: string[] }
   | { kind: 'url'; url: string }
 
 export interface CatalogStream {
@@ -32,6 +32,42 @@ export interface StreamTarget {
   id: string
   season?: number
   episode?: number
+}
+
+/**
+ * Os trackers que o próprio addon indica para AQUELE torrent.
+ *
+ * A convenção é uma lista `sources` com entradas `tracker:<url>` e `dht:<hash>`.
+ * Descartá-las e confiar só na lista genérica acima é pedir peers no lugar
+ * errado: um torrent anunciado num tracker brasileiro não aparece em nenhum
+ * dos públicos, e o enxame some mesmo com dezenas de seeds do outro lado.
+ *
+ * Vem de um addon, ou seja, de fora: só esquemas de tracker, tamanho limitado
+ * e quantidade limitada.
+ */
+// Dezesseis, e não mais: o servidor corta a lista em vinte, e os quatro
+// genéricos acima precisam caber depois destes. Só os esquemas que o servidor
+// aceita — ele descarta ws e wss, que não servem para o worker de qualquer
+// forma, e gastá-los aqui seria gastar vaga à toa.
+const MAX_ADDON_TRACKERS = 16
+const MAX_TRACKER_LENGTH = 300
+const TRACKER_SCHEMES = new Set(['udp:', 'http:', 'https:'])
+
+function readTrackers(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const found: string[] = []
+  for (const entry of value) {
+    if (found.length >= MAX_ADDON_TRACKERS) break
+    if (typeof entry !== 'string' || entry.length > MAX_TRACKER_LENGTH) continue
+    if (!entry.startsWith('tracker:')) continue
+    const raw = entry.slice('tracker:'.length).trim()
+    try {
+      const url = new URL(raw)
+      if (!TRACKER_SCHEMES.has(url.protocol)) continue
+      if (!found.includes(url.href)) found.push(url.href)
+    } catch { }
+  }
+  return found
 }
 
 const FLAG_PATTERN = /\p{Regional_Indicator}\p{Regional_Indicator}/gu
@@ -81,6 +117,7 @@ function readLocation(stream: Record<string, unknown>): StreamLocation | null {
         ? stream.fileIdx
         : null,
       fileName: typeof hints.filename === 'string' ? hints.filename : '',
+      trackers: readTrackers(stream.sources),
     }
   }
   if (typeof stream.url === 'string') {
@@ -110,10 +147,14 @@ export function parseStreams(payload: unknown, pluginId: string, pluginName = ''
     if (!location) continue
     const title = typeof stream.title === 'string' ? stream.title.slice(0, MAX_TITLE) : ''
     const parsed = parseStreamTitle(title)
-    const quality = typeof stream.name === 'string' ? stream.name.split('\n').slice(1).join(' ') || stream.name : ''
+    const named = typeof stream.name === 'string' ? stream.name.split('\n').slice(1).join(' ') || stream.name : ''
+    const resolution = streamResolution(named, parsed.label)
+    // Sem `name`, o selo saía vazio — uma pastilha laranja sem texto nenhum.
+    // A resolução já foi deduzida do título; dizer isso é melhor que nada.
+    const quality = named.trim() || (resolution === 'sd' ? '' : resolution)
     result.push({
       quality,
-      resolution: streamResolution(quality, parsed.label),
+      resolution,
       label: parsed.label,
       seeders: parsed.seeders,
       size: parsed.size,
@@ -130,7 +171,10 @@ export function parseStreams(payload: unknown, pluginId: string, pluginName = ''
 export function buildMagnet(location: Extract<StreamLocation, { kind: 'torrent' }>, label: string): string {
   const name = location.fileName || label
   const dn = name ? `&dn=${encodeURIComponent(name)}` : ''
-  const trackers = TRACKERS.map((tracker) => `&tr=${encodeURIComponent(tracker)}`).join('')
+  // Os do addon primeiro: são os que sabem deste torrent. Os genéricos vêm
+  // atrás, para o caso de ele também estar num deles.
+  const all = [...location.trackers, ...TRACKERS.filter((t) => !location.trackers.includes(t))]
+  const trackers = all.map((tracker) => `&tr=${encodeURIComponent(tracker)}`).join('')
   return `magnet:?xt=urn:btih:${location.infoHash}${dn}${trackers}`
 }
 

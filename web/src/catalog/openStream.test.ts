@@ -10,6 +10,7 @@ const location = (over: Partial<TorrentLocation> = {}): TorrentLocation => ({
   infoHash: 'b43df67a93863ea91f2f773f00361072da771dd3',
   fileIdx: null,
   fileName: '',
+  trackers: [],
   ...over,
 })
 

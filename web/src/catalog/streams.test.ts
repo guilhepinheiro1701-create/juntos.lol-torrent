@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { StreamLocation } from './streams'
 import { buildMagnet, isPlayable, parseStreams, parseStreamTitle, streamKey, streamResolution, type CatalogStream } from './streams'
 
 describe('parseStreamTitle', () => {
@@ -60,6 +61,7 @@ describe('parseStreams', () => {
       infoHash: 'ad9462066cdf17273f91c4b4f708f1650394fc00',
       fileIdx: 0,
       fileName: 'Movie.2160p.mkv',
+      trackers: [],
     })
     expect(stream.pluginId).toBe('sha-of-origin')
     expect(stream.pluginName).toBe('Acme')
@@ -98,7 +100,7 @@ describe('parseStreams', () => {
 describe('buildMagnet', () => {
   it('builds a magnet with the file name and public trackers', () => {
     const magnet = buildMagnet(
-      { kind: 'torrent', infoHash: 'ad9462066cdf17273f91c4b4f708f1650394fc00', fileIdx: 0, fileName: 'Movie.mkv' },
+      { kind: 'torrent', infoHash: 'ad9462066cdf17273f91c4b4f708f1650394fc00', fileIdx: 0, fileName: 'Movie.mkv', trackers: [] },
       'Movie',
     )
     expect(magnet.startsWith('magnet:?xt=urn:btih:ad9462066cdf17273f91c4b4f708f1650394fc00')).toBe(true)
@@ -107,7 +109,7 @@ describe('buildMagnet', () => {
   })
 
   it('falls back to the label when the torrent named no file', () => {
-    const magnet = buildMagnet({ kind: 'torrent', infoHash: 'b'.repeat(40), fileIdx: null, fileName: '' }, 'Some Release')
+    const magnet = buildMagnet({ kind: 'torrent', infoHash: 'b'.repeat(40), fileIdx: null, fileName: '', trackers: [] }, 'Some Release')
     expect(magnet).toContain('&dn=Some%20Release')
   })
 })
@@ -119,17 +121,17 @@ describe('streamKey', () => {
   })
 
   it('separates two files of the same torrent', () => {
-    const at = (fileIdx: number) => streamKey(of({ kind: 'torrent', infoHash: 'a'.repeat(40), fileIdx, fileName: '' }))
+    const at = (fileIdx: number) => streamKey(of({ kind: 'torrent', infoHash: 'a'.repeat(40), fileIdx, fileName: '', trackers: [] }))
     expect(at(0)).not.toBe(at(1))
   })
 
   it('separates a torrent from a url', () => {
-    expect(streamKey(of({ kind: 'torrent', infoHash: 'a'.repeat(40), fileIdx: null, fileName: '' })))
+    expect(streamKey(of({ kind: 'torrent', infoHash: 'a'.repeat(40), fileIdx: null, fileName: '', trackers: [] })))
       .not.toBe(streamKey(of({ kind: 'url', url: 'https://cdn.example.com/m.mkv' })))
   })
 
   it('separates the same torrent found by two different plugins', () => {
-    const location = { kind: 'torrent' as const, infoHash: 'a'.repeat(40), fileIdx: null, fileName: '' }
+    const location = { kind: 'torrent' as const, infoHash: 'a'.repeat(40), fileIdx: null, fileName: '', trackers: [] }
     expect(streamKey(of(location, 'a'))).not.toBe(streamKey(of(location, 'b')))
   })
 })
@@ -161,5 +163,76 @@ describe('readLocation, through parseStreams', () => {
   it('truncates a title long enough to be a document', () => {
     const [stream] = parseStreams({ streams: [{ infoHash: 'a'.repeat(40), title: 'x'.repeat(5000) }] }, 'p')
     expect(stream.label.length).toBeLessThanOrEqual(2000)
+  })
+})
+
+// Um torrent anunciado num tracker brasileiro não aparece em nenhum dos
+// públicos. Descartar os trackers que o addon indica é pedir peers no lugar
+// errado, e o enxame some mesmo com dezenas de seeds do outro lado.
+describe('the trackers the addon points at', () => {
+  const withSources = (sources: unknown) => parseStreams(
+    { streams: [{ infoHash: 'a'.repeat(40), title: 'Filme', sources }] },
+    'p',
+  )[0].location as Extract<StreamLocation, { kind: 'torrent' }>
+
+  it('keeps them, and puts them in the magnet ahead of the public ones', () => {
+    const location = withSources([
+      'tracker:udp://tracker.exemplo.br:6969/announce',
+      'dht:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      'tracker:https://outro.exemplo.br/announce',
+    ])
+
+    expect(location.trackers).toEqual([
+      'udp://tracker.exemplo.br:6969/announce',
+      'https://outro.exemplo.br/announce',
+    ])
+
+    const magnet = buildMagnet(location, 'Filme')
+    const order = [...magnet.matchAll(/&tr=([^&]+)/g)].map((m) => decodeURIComponent(m[1]))
+    expect(order[0]).toBe('udp://tracker.exemplo.br:6969/announce')
+    expect(order).toContain('udp://tracker.opentrackr.org:1337/announce')
+  })
+
+  // Vem de um addon: é dado de fora, e entra num magnet que o worker vai usar.
+  it('refuses anything that is not a tracker url, and does not repeat itself', () => {
+    expect(withSources([
+      'tracker:javascript:alert(1)',
+      'tracker:file:///etc/passwd',
+      'tracker:not a url',
+      'tracker:udp://um.exemplo:6969/announce',
+      'tracker:udp://um.exemplo:6969/announce',
+      42,
+      'dht:abc',
+    ]).trackers).toEqual(['udp://um.exemplo:6969/announce'])
+  })
+
+  it('caps how many it will take', () => {
+    const many = Array.from({ length: 50 }, (_, n) => `tracker:udp://t${n}.exemplo:6969/announce`)
+    expect(withSources(many).trackers).toHaveLength(16)
+  })
+
+  it('is fine with an addon that names none', () => {
+    expect(withSources(undefined).trackers).toEqual([])
+    expect(withSources('nao e lista').trackers).toEqual([])
+  })
+})
+
+// O selo de qualidade saía como uma pastilha laranja sem texto nenhum para os
+// addons que não mandam `name` — que é o caso de vários indexadores BR.
+describe('the quality badge', () => {
+  const badge = (stream: Record<string, unknown>) =>
+    parseStreams({ streams: [{ infoHash: 'a'.repeat(40), ...stream }] }, 'p')[0].quality
+
+  it('falls back to the resolution read from the title', () => {
+    expect(badge({ title: 'DUBLADO DUAL ÁUDIO MKV ULTRA HD 4K' })).toBe('2160p')
+    expect(badge({ title: 'DUBLADO DUAL ÁUDIO 5.1 MKV BLURAY 1080P (60 FPS)' })).toBe('1080p')
+  })
+
+  it('still prefers what the addon says when it says anything', () => {
+    expect(badge({ name: 'Torrentio\n4k HDR', title: 'DUBLADO 1080P' })).toBe('4k HDR')
+  })
+
+  it('stays empty when there is nothing to say', () => {
+    expect(badge({ title: 'DUBLADO MKV' })).toBe('')
   })
 })
