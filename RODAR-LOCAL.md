@@ -1,15 +1,49 @@
 # Rodar o juntos.lol na sua máquina
 
-Tudo em containers. A única coisa que precisa estar instalada é o Docker.
+## O mínimo que você precisa saber
+
+O juntos.lol é feito de quatro programas que conversam entre si: o site, o
+servidor, o baixador de torrents e um lugar para guardar o vídeo já preparado.
+Instalar isso na mão significaria instalar Go, Rust, Node, FFmpeg e um banco
+de dados, um por um, na versão certa.
+
+O **Docker** existe para evitar exatamente isso. Ele roda cada programa dentro
+de uma caixa que já vem com tudo de que aquele programa precisa. Então a única
+coisa que você instala é o Docker; o resto vem pronto.
 
 ## Windows
 
-1. Instale o [Docker Desktop](https://www.docker.com/products/docker-desktop/), abra uma vez e espere ficar verde.
-2. Clique em **`setup.bat`**. Roda uma vez só.
-3. Depois disso, **`start.bat`** sempre que quiser assistir. Abre no navegador sozinho.
-4. **`stop.bat`** para desligar.
+**1. Instale o Docker Desktop.**
+Baixe em <https://www.docker.com/products/docker-desktop/> e instale.
 
-Fechar a janela do `start.bat` não desliga nada: os containers ficam rodando em segundo plano. É o `stop.bat` que desliga.
+- Se ele pedir para instalar o **WSL 2**, aceite. É um componente do próprio
+  Windows que o Docker usa para rodar Linux por baixo.
+- Ele pede para reiniciar o computador no fim. Reinicie.
+- Depois de reiniciar, **abra o Docker Desktop uma vez** e espere. O ícone da
+  baleia na barra de tarefas para de se mexer, e o painel passa a dizer
+  *Engine running*. Isso pode levar um ou dois minutos na primeira vez.
+
+**2. Clique em `setup.bat`.** Roda uma vez só, e mostra quatro passos:
+
+1. confere o Docker;
+2. gera as senhas desta instalação, num arquivo `.env.local`;
+3. acrescenta uma linha ao arquivo `hosts` do Windows (pede administrador,
+   e explica o porquê antes);
+4. monta os programas.
+
+O passo 4 é o demorado: **de 15 a 40 minutos na primeira vez**, porque ele
+compila tudo do zero. Vai passar muito texto na tela — isso é normal, não é
+erro. Nas próximas vezes é quase instantâneo, porque fica guardado.
+
+**3. Clique em `start.bat`** sempre que quiser assistir. Ele sobe tudo, espera
+o servidor responder e abre o navegador sozinho em `http://localhost:8099`.
+
+**4. `stop.bat`** para desligar. Fechar a janela do `start` **não** desliga:
+as caixas continuam rodando em segundo plano de propósito, para o site seguir
+disponível.
+
+> Os `.bat` são só atalhos de três linhas. A lógica está nos `.ps1` ao lado,
+> que você pode abrir e ler.
 
 ## Linux e macOS
 
@@ -19,12 +53,26 @@ Fechar a janela do `start.bat` não desliga nada: os containers ficam rodando em
 ./stop.sh      # desligar
 ```
 
-## O que o setup faz
+## Por que o setup pede administrador
 
-- **Confere o Docker.** Se faltar, abre a página oficial e para. Não baixa nem roda instalador por você: isso é software com privilégio de administrador, e quem decide instalar é você.
-- **Gera `.env.local`** com uma senha do MinIO e um segredo de inscrição do worker, ambos aleatórios. São desta instalação. Se apagar o arquivo e rodar o setup de novo, os segredos mudam e o MinIO antigo deixa de abrir — guarde-o junto com o resto.
-- **Adiciona `127.0.0.1 juntos-minio`** ao arquivo hosts, pedindo administrador. Isso é necessário porque a assinatura S3 inclui o `Host`: o nome precisa resolver igual dentro do container e no navegador, senão o `PUT` dos segmentos dá 403 e o vídeo não toca.
-- **Monta as imagens.** A primeira vez demora bastante — compila o servidor em Go, o worker em Rust e o site. Depois é cache.
+Uma vez só, para acrescentar **uma linha** ao arquivo `hosts`:
+
+```
+127.0.0.1 juntos-minio
+```
+
+O navegador busca os pedaços do vídeo no endereço `juntos-minio`, e esse nome
+precisa significar a mesma coisa dentro da caixa do Docker e aqui fora. O
+motivo é que a assinatura de segurança do armazenamento inclui o endereço: se
+não bater dos dois lados, o envio é recusado e o vídeo não toca.
+
+Se preferir fazer à mão, o setup mostra o passo a passo com o Bloco de Notas.
+
+## O que o setup NÃO faz
+
+Ele não baixa nem instala o Docker por você. Um instalador pede permissão de
+administrador sobre a máquina inteira, e essa decisão é sua, na página do
+fabricante. O setup abre a página e para.
 
 ## O que sobe
 

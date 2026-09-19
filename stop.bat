@@ -1,17 +1,4 @@
 @echo off
-setlocal
-chcp 65001 >nul 2>&1
-title juntos.lol - desligar
-
-cd /d "%~dp0"
-
-echo.
-echo   Desligando o juntos.lol...
-echo.
-docker compose -f docker-compose.local.yml --env-file .env.local stop
-
-echo.
-echo   Desligado. Nada foi apagado: os filmes baixados, o banco e o bucket
-echo   continuam onde estavam, e start.bat volta com tudo.
-echo.
-timeout /t 5 /nobreak >nul
+REM Lancador. A logica esta em stop.ps1: batch nao aguenta parenteses dentro de
+REM blocos if(), e foi isso que quebrou a versao anterior deste arquivo.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0stop.ps1"
