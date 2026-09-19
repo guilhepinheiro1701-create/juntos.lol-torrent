@@ -1,10 +1,13 @@
 # juntos.lol, inteiro na sua máquina.
 #
-# O upstream depende de um bucket R2 (Cloudflare) para os segmentos HLS. Isso
-# sai de graça: o servidor fala S3 genérico pelo cliente minio-go, e
-# `R2_ENDPOINT` existe justamente para apontá-lo para outro lugar
-# (internal/objectstore/r2.go). Então o R2 vira um MinIO aqui do lado, e nada
-# nesta pilha sai da sua rede além dos torrents e do catálogo.
+# O upstream guarda os segmentos HLS num bucket R2 (Cloudflare), porque lá quem
+# escreve e quem lê são máquinas diferentes. Aqui é um computador só: o mesmo
+# servidor que mostra a página guarda os segmentos, numa pasta (MEDIA_DIR).
+# Isso dispensa um servidor de armazenamento, a senha dele, o endereço que
+# precisava significar a mesma coisa dentro e fora do container, e a linha no
+# arquivo hosts que só existia por causa disso.
+#
+# Nada nesta pilha sai da sua rede além dos torrents e do catálogo.
 #
 # Não use isto na internet. Tudo publica em 127.0.0.1 de propósito, não há TLS
 # e o worker roda em HTTP puro.
@@ -34,19 +37,10 @@ services:
       WEB_DIR: /web
       GIN_MODE: release
 
-      # O bucket. R2_ACCOUNT_ID só precisa não estar vazio: com R2_ENDPOINT
-      # definido, o account id deixa de compor o endereço e vira enfeite.
-      R2_ACCOUNT_ID: local
-      R2_BUCKET: ${MINIO_BUCKET:-juntos}
-      R2_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?rode o setup primeiro}
-      R2_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?rode o setup primeiro}
-      R2_ENDPOINT: ${S3_HOST:-juntos-minio}:9000
-      R2_INSECURE: "1"
-
-      # De onde o NAVEGADOR baixa os segmentos. Precisa ser o mesmo nome do
-      # R2_ENDPOINT: a assinatura SigV4 inclui o Host, então um endereço aqui
-      # e outro lá dá 403 no PUT.
-      MEDIA_PUBLIC_URL: http://${S3_HOST:-juntos-minio}:9000/${MINIO_BUCKET:-juntos}
+      # A pasta dos segmentos. Definir isto é o que troca o bucket por disco:
+      # o navegador escreve e lê no mesmo endereço da página, então não há
+      # outra origem, nem assinatura de host, nem nome para acertar.
+      MEDIA_DIR: /media
 
       PUBLIC_ORIGIN: http://localhost:8099
       ROOM_TTL_HOURS: ${ROOM_TTL_HOURS:-5}
@@ -59,17 +53,11 @@ services:
       # Saída para os plugins de fonte. Deixe vazio; só serve se algum addon
       # recusar o seu IP.
       PLUGIN_FETCH_PROXY: ${PLUGIN_FETCH_PROXY:-}
-    # O nome do MinIO tem de resolver igual dentro do container e no navegador.
-    # Dentro, vai para o gateway do host, onde a porta 9000 está publicada.
-    extra_hosts:
-      - "${S3_HOST:-juntos-minio}:host-gateway"
     volumes:
       - juntos-data:/data
+      - juntos-media:/media
     depends_on:
-      minio-init:
-        condition: service_completed_successfully
-      redis:
-        condition: service_started
+      - redis
 
   redis:
     image: redis:7-alpine
@@ -77,43 +65,6 @@ services:
     command: redis-server --maxmemory-policy volatile-ttl
     volumes:
       - juntos-redis:/data
-
-  minio:
-    image: minio/minio:latest
-    restart: unless-stopped
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?rode o setup primeiro}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?rode o setup primeiro}
-      # O navegador faz PUT dos segmentos direto no bucket, de outra origem.
-      MINIO_API_CORS_ALLOW_ORIGIN: "http://localhost:8099"
-    ports:
-      - "127.0.0.1:9000:9000"   # a API S3, que é a que o navegador usa
-      - "127.0.0.1:9001:9001"   # console web, opcional
-    volumes:
-      - juntos-minio:/data
-
-  # Cria o bucket e o deixa de leitura anônima: as playlists saem do servidor,
-  # mas os segmentos o navegador busca direto do bucket, sem assinatura.
-  minio-init:
-    image: minio/mc:latest
-    depends_on:
-      - minio
-    # Espera o MinIO por conta própria, em vez de depender de um healthcheck
-    # que assume um `mc` pronto dentro da imagem do servidor.
-    entrypoint: >
-      /bin/sh -c "
-      until mc alias set local http://minio:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\" 2>/dev/null; do
-        echo 'esperando o MinIO...'; sleep 2;
-      done &&
-      mc mb --ignore-existing local/$$MINIO_BUCKET &&
-      mc anonymous set download local/$$MINIO_BUCKET &&
-      echo \"bucket $$MINIO_BUCKET pronto\"
-      "
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?rode o setup primeiro}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?rode o setup primeiro}
-      MINIO_BUCKET: ${MINIO_BUCKET:-juntos}
 
   # Os torrents. Sem ele o catálogo abre e nada toca, então sobe junto.
   worker:
@@ -152,5 +103,5 @@ services:
 volumes:
   juntos-data:
   juntos-redis:
-  juntos-minio:
+  juntos-media:
   juntos-worker:

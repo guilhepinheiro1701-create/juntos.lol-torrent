@@ -35,7 +35,7 @@ Nota 'desta instalacao e monta os programas. Depois e so o start.'
 # Tudo roda em containers: caixas isoladas com o programa e tudo de que ele
 # precisa ja dentro. E por isso que a unica coisa a instalar e o Docker, em vez
 # de Go, Rust, Node, FFmpeg e um banco de dados, um por um.
-Titulo '1 de 4  Docker'
+Titulo '1 de 3  Docker'
 
 $docker = Get-Command docker -ErrorAction SilentlyContinue
 if (-not $docker) {
@@ -132,9 +132,9 @@ if ($projetos -join '' -match [regex]::Escape($projetoErrado)) {
 }
 
 # ---------------------------------------------------------------- senhas ---
-# Geradas aqui, uma vez. O MinIO desta pilha guarda os seus filmes, e uma
-# senha fixa num arquivo publicado no GitHub nao e senha.
-Titulo '2 de 4  Senhas desta instalacao'
+# Gerado aqui, uma vez. O baixador so entra na frota com este segredo, e um
+# segredo fixo num arquivo publicado no GitHub nao e segredo.
+Titulo '2 de 3  Segredo desta instalacao'
 
 function NovoSegredo {
     $bytes = New-Object byte[] 24
@@ -144,20 +144,16 @@ function NovoSegredo {
 }
 
 if (Test-Path -LiteralPath '.env.local') {
-    Ok '.env.local ja existe; mantendo as senhas que estao nele.'
+    Ok '.env.local ja existe; mantendo o que esta nele.'
 } else {
     Passo 'Gerando .env.local...'
     $linhas = @(
-        '# Escrito pelo setup. As senhas aqui sao SO desta instalacao.'
+        '# Escrito pelo setup. O segredo aqui e SO desta instalacao.'
         '#'
-        '# Se voce apagar este arquivo e rodar o setup de novo, elas mudam, e o'
-        '# MinIO antigo (onde ficam os videos ja preparados) deixa de abrir.'
-        '# Guarde-o junto com o resto, e nao publique em lugar nenhum.'
+        '# Ele e o que deixa o baixador entrar na frota do servidor. Se voce'
+        '# apagar este arquivo e rodar o setup de novo, ele muda, e e so isso:'
+        '# nada do que ja foi baixado se perde. Nao publique em lugar nenhum.'
         ''
-        'MINIO_ROOT_USER=juntos'
-        "MINIO_ROOT_PASSWORD=$(NovoSegredo)"
-        'MINIO_BUCKET=juntos'
-        'S3_HOST=juntos-minio'
         "WORKER_ENROLLMENT_SECRET=$(NovoSegredo)"
         ''
         '# Quanto disco o baixador pode usar para os torrents, em GB.'
@@ -182,77 +178,8 @@ if (Test-Path -LiteralPath '.env.local') {
     Ok '.env.local criado.'
 }
 
-# ----------------------------------------------------------------- hosts ---
-# O navegador busca os pedacos do video em juntos-minio:9000. Esse nome precisa
-# significar a mesma coisa dentro do container e aqui fora, porque a assinatura
-# do S3 inclui o endereco: se nao bater, o envio e recusado e o video nao toca.
-Titulo '3 de 4  Nome juntos-minio'
-
-$hostsPath = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
-$temHosts = $false
-try {
-    $temHosts = Select-String -LiteralPath $hostsPath -Pattern 'juntos-minio' -Quiet -ErrorAction Stop
-} catch {
-    Aviso "Nao consegui ler $hostsPath ($($_.Exception.Message))."
-}
-
-if ($temHosts) {
-    Ok 'juntos-minio ja aponta para esta maquina.'
-} else {
-    Aviso 'Falta uma linha no arquivo hosts do Windows.'
-    Write-Host ''
-    Nota 'O navegador busca os pedacos do video no endereco juntos-minio, e'
-    Nota 'esse nome precisa apontar para o seu proprio computador. Sem isso o'
-    Nota 'video nao toca.'
-    Write-Host ''
-    Nota 'Vou pedir permissao de administrador para acrescentar uma linha em:'
-    Nota "  $hostsPath"
-    Nota 'A linha e exatamente esta, e nada mais:'
-    Nota '  127.0.0.1 juntos-minio'
-    Write-Host ''
-
-    # O script vai para um arquivo e o arquivo e que sobe elevado. Passar este
-    # codigo por -Command exigiria aspas dentro de aspas dentro de aspas.
-    $auxiliar = Join-Path $env:TEMP 'juntos-hosts.ps1'
-    $corpo = @'
-$f = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
-if (-not (Select-String -LiteralPath $f -Pattern 'juntos-minio' -Quiet)) {
-    Add-Content -LiteralPath $f -Value "`r`n127.0.0.1 juntos-minio"
-}
-'@
-    Set-Content -LiteralPath $auxiliar -Value $corpo -Encoding UTF8
-    try {
-        $p = Start-Process powershell -Verb RunAs -Wait -PassThru -ArgumentList @(
-            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $auxiliar
-        )
-        if ($p.ExitCode -ne 0) { Aviso 'O pedido de administrador terminou com erro.' }
-    } catch {
-        Aviso 'O pedido de administrador foi recusado ou cancelado.'
-    } finally {
-        Remove-Item -LiteralPath $auxiliar -ErrorAction SilentlyContinue
-    }
-
-    $agora = $false
-    try { $agora = Select-String -LiteralPath $hostsPath -Pattern 'juntos-minio' -Quiet -ErrorAction Stop } catch { }
-    if (-not $agora) {
-        Erro 'A linha continua faltando.'
-        Write-Host ''
-        Nota 'Faca a mao, uma vez so:'
-        Nota '  1. Menu Iniciar, digite Bloco de Notas.'
-        Nota '  2. Clique com o botao direito, "Executar como administrador".'
-        Nota '  3. Arquivo, Abrir, e cole este caminho:'
-        Nota "     $hostsPath"
-        Nota '     (troque o filtro para "Todos os arquivos" para ve-lo)'
-        Nota '  4. Acrescente esta linha no fim e salve:'
-        Nota '     127.0.0.1 juntos-minio'
-        Nota '  5. Rode este setup de novo.'
-        Fim 1
-    }
-    Ok 'juntos-minio agora aponta para esta maquina.'
-}
-
 # --------------------------------------------------------------- montagem --
-Titulo '4 de 4  Montando os programas'
+Titulo '3 de 3  Montando os programas'
 Write-Host ''
 Nota 'Agora o Docker compila o servidor (Go), o baixador de torrents (Rust) e'
 Nota 'o site. Na primeira vez isso leva de 15 a 40 minutos, dependendo da'

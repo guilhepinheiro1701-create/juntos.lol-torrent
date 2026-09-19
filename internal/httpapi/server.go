@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/giulianoo0/ss/internal/config"
+	"github.com/giulianoo0/ss/internal/objectstore"
 	"github.com/giulianoo0/ss/internal/room"
 )
 
@@ -25,6 +26,7 @@ type serverOptions struct {
 	pluginSessions    *Sessions
 	pluginQuota       *Quota
 	positionHooks     PositionHooks
+	localMedia        *objectstore.Disk
 }
 
 // WithPosition receives the viewer's playback position: what production should
@@ -60,6 +62,13 @@ func WithSubtitlePublisher(publisher SubtitlePublisher) ServerOption {
 
 // WithClientMedia enables the only path by which media reaches a room: the host's
 // browser remuxes the source and writes segments into the bucket via presigned URLs.
+// WithLocalMedia serves the objects from this server's own folder instead of a
+// bucket. It is what the single-computer install uses: no second server, no
+// password, no cross-origin rules.
+func WithLocalMedia(disk *objectstore.Disk) ServerOption {
+	return func(o *serverOptions) { o.localMedia = disk }
+}
+
 func WithClientMedia(bucket ClientMediaBucket, hooks ClientMediaHooks) ServerOption {
 	return func(o *serverOptions) {
 		o.clientMediaBucket = bucket
@@ -83,6 +92,7 @@ func NewServer(cfg config.Config, store *room.Store, opts ...ServerOption) *gin.
 	RegisterRoomRoutes(r.Group("/api"), store, cfg)
 	waiter := newPlaylistWaiter()
 	RegisterMediaRoutes(r, store, waiter)
+	RegisterMediaObjectRoutes(r, options.localMedia)
 	options.clientMediaHooks.NotifyPlaylists = waiter.Notify
 	// The room no longer pushes anything: the page polls for what it needs, so
 	// there is nobody left to notify that subtitles landed.

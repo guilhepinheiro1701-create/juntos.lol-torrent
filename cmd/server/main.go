@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +22,14 @@ import (
 	"github.com/giulianoo0/ss/internal/worker"
 )
 
+// mediaStore is everything the server asks of its object store, whether that
+// is a bucket far away or a folder on this disk.
+type mediaStore interface {
+	objectstore.Store
+	room.MediaStore
+	httpapi.ClientMediaBucket
+}
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -34,16 +43,31 @@ func main() {
 	rdb := redis.NewClient(opts)
 	store := room.NewStore(rdb, time.Duration(cfg.RoomTTLHours)*time.Hour)
 
-	bucket, err := objectstore.NewR2(objectstore.R2Config{
-		AccountID: cfg.R2AccountID,
-		Bucket:    cfg.R2Bucket,
-		AccessKey: cfg.R2AccessKeyID,
-		SecretKey: cfg.R2SecretAccessKey,
-		Endpoint:  cfg.R2Endpoint,
-		Insecure:  cfg.R2Insecure,
-	})
-	if err != nil {
-		log.Fatal(err)
+	// One store, four jobs: it publishes, it hands segments back, it is swept
+	// and it is reclaimed. Which one is behind the interface is the only thing
+	// that separates the cloud install from the one on a single computer.
+	var bucket mediaStore
+	var localMedia *objectstore.Disk
+	if cfg.MediaDir != "" {
+		localMedia, err = objectstore.NewDisk(cfg.MediaDir,
+			strings.TrimSuffix(cfg.MediaPublicURL, objectstore.UploadPath))
+		if err != nil {
+			log.Fatal(err)
+		}
+		bucket = localMedia
+	} else {
+		r2, err := objectstore.NewR2(objectstore.R2Config{
+			AccountID: cfg.R2AccountID,
+			Bucket:    cfg.R2Bucket,
+			AccessKey: cfg.R2AccessKeyID,
+			SecretKey: cfg.R2SecretAccessKey,
+			Endpoint:  cfg.R2Endpoint,
+			Insecure:  cfg.R2Insecure,
+		})
+		if err != nil {
+			log.Fatal(err)
+		}
+		bucket = r2
 	}
 	publisher := media.NewPublisher(store, bucket, cfg.MediaPublicURL)
 
@@ -109,6 +133,7 @@ func main() {
 	r := httpapi.NewServer(cfg, store,
 		httpapi.WithSubtitlePublisher(publisher),
 		httpapi.WithClientMedia(bucket, httpapi.ClientMediaHooks{}),
+		httpapi.WithLocalMedia(localMedia),
 		httpapi.WithSourceHooks(httpapi.SourceHooks{CancelMedia: func(roomID string) {
 			remuxOrch.CancelRoom(roomID)
 			torrents.CancelRoom(roomID)

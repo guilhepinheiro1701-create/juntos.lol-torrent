@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/giulianoo0/ss/internal/objectstore"
 )
 
 const mediaLifecycleHours = 5
@@ -27,6 +29,7 @@ type Config struct {
 	R2SecretAccessKey string
 	R2Endpoint        string
 	R2Insecure        bool
+	MediaDir          string
 	MediaPublicURL    string
 
 	SessionTTLDays         int
@@ -101,7 +104,13 @@ func Load() (Config, error) {
 	cfg.R2Bucket = os.Getenv("R2_BUCKET")
 	cfg.R2AccessKeyID = os.Getenv("R2_ACCESS_KEY_ID")
 	cfg.R2SecretAccessKey = os.Getenv("R2_SECRET_ACCESS_KEY")
+	cfg.MediaDir = strings.TrimSpace(os.Getenv("MEDIA_DIR"))
 	cfg.MediaPublicURL = strings.TrimSuffix(os.Getenv("MEDIA_PUBLIC_URL"), "/")
+	if cfg.MediaDir != "" && cfg.MediaPublicURL == "" {
+		// Same origin as the page, so there is no host to name and nothing to
+		// keep in step between the container and the browser.
+		cfg.MediaPublicURL = objectstore.UploadPath
+	}
 	if err := cfg.validateMedia(); err != nil {
 		return Config{}, err
 	}
@@ -145,10 +154,15 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
-// validateMedia fails the boot on incomplete object storage settings: media
-// has no disk fallback, so a missing variable is a room that breaks on the
-// first upload.
+// validateMedia fails the boot on incomplete object storage settings: a
+// half-configured store is a room that breaks on the first upload.
+//
+// MEDIA_DIR is the single-computer answer and needs nothing else: the folder is
+// the store, and this same server hands its contents back.
 func (c Config) validateMedia() error {
+	if c.MediaDir != "" {
+		return c.validateLifecycle()
+	}
 	missing := []string{}
 	for name, value := range map[string]string{
 		"R2_ACCOUNT_ID":        c.R2AccountID,
@@ -165,6 +179,10 @@ func (c Config) validateMedia() error {
 		slices.Sort(missing)
 		return fmt.Errorf("config: media storage needs %s", strings.Join(missing, ", "))
 	}
+	return c.validateLifecycle()
+}
+
+func (c Config) validateLifecycle() error {
 	if c.RoomTTLHours > mediaLifecycleHours {
 		return fmt.Errorf("config: ROOM_TTL_HOURS=%d outlives the %dh media lifecycle",
 			c.RoomTTLHours, mediaLifecycleHours)

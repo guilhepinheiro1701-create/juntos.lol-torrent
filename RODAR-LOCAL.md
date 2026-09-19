@@ -2,8 +2,8 @@
 
 ## O mínimo que você precisa saber
 
-O juntos.lol é feito de quatro programas que conversam entre si: o site, o
-servidor, o baixador de torrents e um lugar para guardar o vídeo já preparado.
+O juntos.lol é feito de três programas que conversam entre si: o site e o
+servidor (que são um só), o baixador de torrents e um banco de dados pequeno.
 Instalar isso na mão significaria instalar Go, Rust, Node, FFmpeg e um banco
 de dados, um por um, na versão certa.
 
@@ -23,15 +23,15 @@ Baixe em <https://www.docker.com/products/docker-desktop/> e instale.
   baleia na barra de tarefas para de se mexer, e o painel passa a dizer
   *Engine running*. Isso pode levar um ou dois minutos na primeira vez.
 
-**2. Clique em `setup.bat`.** Roda uma vez só, e mostra quatro passos:
+**2. Clique em `setup.bat`.** Roda uma vez só, e mostra três passos:
 
 1. confere o Docker;
-2. gera as senhas desta instalação, num arquivo `.env.local`;
-3. acrescenta uma linha ao arquivo `hosts` do Windows (pede administrador,
-   e explica o porquê antes);
-4. monta os programas.
+2. gera o segredo desta instalação, num arquivo `.env.local`;
+3. monta os programas.
 
-O passo 4 é o demorado: **de 15 a 40 minutos na primeira vez**, porque ele
+Ele **não** pede administrador, e não mexe em nada fora desta pasta.
+
+O passo 3 é o demorado: **de 15 a 40 minutos na primeira vez**, porque ele
 compila tudo do zero. Vai passar muito texto na tela — isso é normal, não é
 erro. Nas próximas vezes é quase instantâneo, porque fica guardado.
 
@@ -53,20 +53,20 @@ disponível.
 ./stop.sh      # desligar
 ```
 
-## Por que o setup pede administrador
+## Onde ficam os pedaços do vídeo
 
-Uma vez só, para acrescentar **uma linha** ao arquivo `hosts`:
+Numa pasta dentro do Docker, e o próprio servidor do site os entrega, no mesmo
+endereço da página.
 
-```
-127.0.0.1 juntos-minio
-```
+A versão de nuvem usa um bucket da Cloudflare, porque lá quem escreve e quem lê
+são máquinas diferentes. Aqui é um computador só, então o bucket não serviria
+para nada e custava caro: um segundo servidor para subir, uma senha para
+guardar, um nome de endereço que tinha de significar a mesma coisa dentro e
+fora do container — e era por isso que o setup antigo pedia administrador para
+mexer no arquivo `hosts` do Windows. Nada disso existe mais.
 
-O navegador busca os pedaços do vídeo no endereço `juntos-minio`, e esse nome
-precisa significar a mesma coisa dentro da caixa do Docker e aqui fora. O
-motivo é que a assinatura de segurança do armazenamento inclui o endereço: se
-não bater dos dois lados, o envio é recusado e o vídeo não toca.
-
-Se preferir fazer à mão, o setup mostra o passo a passo com o Bloco de Notas.
+> Se você rodou uma versão anterior, a linha `127.0.0.1 juntos-minio` ficou no
+> seu arquivo `hosts`. Ela não atrapalha nada; pode deixar ou tirar.
 
 ## O que o setup NÃO faz
 
@@ -78,9 +78,8 @@ fabricante. O setup abre a página e para.
 
 | | |
 |---|---|
-| `app` | o servidor e o site, em `127.0.0.1:8099` |
+| `app` | o servidor, o site e os segmentos do vídeo, em `127.0.0.1:8099` |
 | `worker` | os torrents, em `127.0.0.1:8081` e a porta 4240 para os peers |
-| `minio` | os segmentos HLS, em `127.0.0.1:9000` (console em `:9001`) |
 | `redis` | as salas |
 
 Tudo publica em `127.0.0.1` de propósito. **Não exponha isto na internet:** não há TLS, e o worker roda em HTTP puro.
@@ -130,7 +129,9 @@ docker compose logs -f worker
 docker compose ps
 ```
 
-**O vídeo não toca e o console mostra 403 no `PUT`.** É o `juntos-minio` não resolvendo. Confira a linha no arquivo hosts.
+**O vídeo não toca e o console mostra 403 no `PUT`.** A assinatura do envio
+vale quinze minutos e é refeita a cada reinício do servidor. Recarregue a
+página; se insistir, veja `logs -f app`.
 
 **"no workers".** O worker não entrou na frota. Quase sempre é o `WORKER_ENROLLMENT_SECRET` diferente entre o `app` e o `worker` — acontece se o `.env.local` foi editado à mão. Veja `logs -f worker`.
 
@@ -142,4 +143,5 @@ docker compose ps
 docker compose down -v
 ```
 
-O `-v` leva os volumes junto: filmes baixados, salas e bucket. Sem ele, só os containers somem.
+O `-v` leva os volumes junto: filmes baixados, salas e os segmentos já
+preparados. Sem ele, só os containers somem.

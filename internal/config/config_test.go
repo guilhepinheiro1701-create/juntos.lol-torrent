@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/giulianoo0/ss/internal/objectstore"
 )
 
 func setMediaEnv(t *testing.T) {
@@ -82,4 +84,37 @@ func TestLoadTrimsTheMediaOrigin(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Equal(t, "https://media.example.test", cfg.MediaPublicURL)
+}
+
+// MEDIA_DIR is the single-computer store: the folder is the bucket, and this
+// same server hands its contents back, so there is nothing else to configure.
+func TestLoadAcceptsAMediaFolderAlone(t *testing.T) {
+	t.Setenv("MEDIA_DIR", "/media")
+
+	cfg, err := Load()
+
+	require.NoError(t, err)
+	require.Equal(t, "/media", cfg.MediaDir)
+	// Same origin as the page: no host to name, nothing to keep in step.
+	require.Equal(t, objectstore.UploadPath, cfg.MediaPublicURL)
+}
+
+func TestLoadKeepsAnExplicitMediaOriginWithAFolder(t *testing.T) {
+	t.Setenv("MEDIA_DIR", "/media")
+	t.Setenv("MEDIA_PUBLIC_URL", "http://localhost:8099/media-objects/")
+
+	cfg, err := Load()
+
+	require.NoError(t, err)
+	require.Equal(t, "http://localhost:8099/media-objects", cfg.MediaPublicURL)
+}
+
+// A room that outlives its media is still a room that breaks, folder or bucket.
+func TestLoadRefusesARoomThatOutlivesAMediaFolder(t *testing.T) {
+	t.Setenv("MEDIA_DIR", "/media")
+	t.Setenv("ROOM_TTL_HOURS", "48")
+
+	_, err := Load()
+
+	require.Error(t, err)
 }

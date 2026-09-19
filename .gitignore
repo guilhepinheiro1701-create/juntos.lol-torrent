@@ -41,3 +41,6 @@ web/dev/*.png
 # Artefatos de build do Rust: o upstream os commitou por engano (3.597
 # arquivos, 1,2 GB de historico). Esta branch comeca sem eles.
 target/
+
+# Despejo do Redis, se alguem rodar um redis-server dentro da pasta.
+dump.rdb
