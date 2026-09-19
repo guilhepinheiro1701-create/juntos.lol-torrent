@@ -36,6 +36,7 @@ pub struct WorkerConfig {
     pub max_torrents: usize,
     pub max_leases: usize,
     pub per_torrent_peer_limit: usize,
+    pub upnp: bool,
     pub upload_bps: u32,
     pub download_bps: u32,
     pub transfer_bps: u64,
@@ -171,8 +172,21 @@ impl WorkerConfig {
             disk_high_water_pct: env_parse("SS_WORKER_DISK_HIGH_WATER_PCT", 90)?,
             max_torrents: env_parse("SS_WORKER_MAX_TORRENTS", 12)?,
             max_leases: env_parse("SS_WORKER_MAX_LEASES", 8)?,
-            per_torrent_peer_limit: env_parse("SS_WORKER_PEER_LIMIT", 40)?,
-            upload_bps: env_parse::<u32>("SS_WORKER_UPLOAD_MBIT", 3)? * 125_000,
+            // Um computador, um filme. Os quarenta de antes eram a conta de um
+            // worker de nuvem dividindo a banda entre oito salas ao mesmo
+            // tempo; aqui o enxame inteiro é de quem está assistindo.
+            per_torrent_peer_limit: env_parse("SS_WORKER_PEER_LIMIT", 150)?,
+            // Ligado por padrão: numa casa, sem a porta aberta no roteador só
+            // há conexões de saída, e metade do enxame fica fora de alcance.
+            // SS_WORKER_UPNP=0 desliga, para quem já abriu a porta na mão ou
+            // não quer que o programa peça nada ao roteador.
+            upnp: env("SS_WORKER_UPNP").as_deref() != Some("0"),
+            // Sem limite. No BitTorrent quem não envia não recebe: os outros
+            // clientes reciprocam na medida do que lhes chega, então um teto de
+            // 3 Mbit de subida — a conta de quem paga banda de datacenter —
+            // estrangulava a descida junto. Ponha um número aqui se a sua
+            // internet sofre com a subida cheia.
+            upload_bps: env_parse::<u32>("SS_WORKER_UPLOAD_MBIT", 0)? * 125_000,
             download_bps: env_parse::<u32>("SS_WORKER_DOWNLOAD_MBIT", 0)? * 125_000,
             transfer_bps: env_parse::<u64>("SS_WORKER_TRANSFER_MBIT", 0)? * 125_000,
             idle_grace: env_secs("SS_WORKER_IDLE_GRACE_SECS", 120)?,

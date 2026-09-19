@@ -44,14 +44,23 @@ describe('Onboarding', () => {
 
   it('opens on what the app is, before either tab is explained', async () => {
     render(<Onboarding />)
-    expect(await screen.findByRole('heading', { name: /assistir junto|watch together/i })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /na sua máquina|your machine/i })).toBeInTheDocument()
   })
 
-  it('explains the room tab, and says nothing needs installing', async () => {
+  // It used to promise synchronised playback with friends over a shared link.
+  // That is gone from the app, so it has to be gone from the first screen a
+  // person ever reads.
+  it('promises nothing about watching together', async () => {
+    render(<Onboarding />)
+    await screen.findByRole('heading', { name: /na sua máquina|your machine/i })
+    expect(screen.queryByText(/amigos|friends|ao mesmo tempo|at the same time/i)).not.toBeInTheDocument()
+  })
+
+  it('explains the open tab, and says nothing needs installing', async () => {
     render(<Onboarding />)
     await userEvent.click(next())
-    expect(await screen.findByRole('heading', { name: /sala|room/i })).toBeInTheDocument()
-    expect(screen.getByText(/nada para instalar|nothing to install/i)).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /abrir|open/i })).toBeInTheDocument()
+    expect(screen.getByText(/sem instalar mais nada|nothing else to install/i)).toBeInTheDocument()
   })
 
   it('explains that the catalogue finds nothing without a plugin', async () => {
@@ -66,7 +75,7 @@ describe('Onboarding', () => {
     render(<Onboarding />)
     await userEvent.click(next())
     await userEvent.click(screen.getByRole('button', { name: /voltar|back/i }))
-    expect(await screen.findByRole('heading', { name: /assistir junto|watch together/i })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /na sua máquina|your machine/i })).toBeInTheDocument()
   })
 
   it('makes a sound on the click, never on its own', async () => {

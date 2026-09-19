@@ -89,7 +89,7 @@ fabricante. O setup abre a página e para.
 
 Tudo publica em `127.0.0.1` de propósito. **Não exponha isto na internet:** não há TLS, e o worker roda em HTTP puro.
 
-A porta **4240** (TCP e UDP) é a única que o roteador precisa deixar entrar, e só para o torrent achar peers. Sem ela o download fica lento ou não anda.
+A porta **4240** (TCP e UDP) é a única que o roteador precisa deixar entrar, e só para o torrent achar peers. O worker tenta abri-la sozinho por UPnP; se o seu roteador não aceitar, abra à mão, ou o download fica lento.
 
 ## Escolher em que disco os filmes ficam
 
@@ -111,7 +111,10 @@ Por padrão tudo vai para um volume do Docker. Para usar discos seus, duas ediç
 WORKER_STORAGE_DIRS=SSD=/discos/ssd,HDD=/discos/hdd
 ```
 
-Os caminhos são sempre os de **dentro** do container. Com dois ou mais, a aba **Baixados** passa a mostrar a escolha, com o espaço livre de cada um. Com um só, não mostra nada — escolha entre uma coisa não é escolha.
+Os caminhos são sempre os de **dentro** do container. A escolha aparece na
+tela de **começar**, logo depois de escolher o filme e antes de baixar
+qualquer coisa, com o espaço livre de cada disco. Mesmo com um só disco a
+caixa aparece, dizendo onde o filme vai parar.
 
 O rótulo é o que a página manda; o caminho nunca sai do worker. Um rótulo que a instalação não declarou é recusado.
 
@@ -119,7 +122,7 @@ O rótulo é o que a página manda; o caminho nunca sai do worker. Um rótulo qu
 
 **Assistir** — aperta o play, escolhe a fonte, e o worker baixa numa janela que acompanha onde você está. Não ocupa o filme inteiro no disco, e o espaço volta depois.
 
-**Baixar** — o botão na sala. O arquivo fica no disco de verdade: sobrevive a reiniciar o worker, e a aba **Baixados** reabre sem internet. Devolver o espaço é um clique na mesma tela.
+**Baixar** — o botão durante a exibição. O arquivo fica no disco de verdade: sobrevive a reiniciar o worker, e a aba **Baixados** reabre sem internet. Devolver o espaço é um clique na mesma tela.
 
 Sem internet, a aba do catálogo diz isso e leva para os Baixados. O catálogo precisa de um serviço de metadados e dos addons; o que já está no disco não precisa de nenhum dos dois.
 
@@ -144,7 +147,17 @@ variável de ambiente, apague o `.env.local` e rode o `setup` de novo.
 
 **"no workers".** O worker não entrou na frota. Quase sempre é o `WORKER_ENROLLMENT_SECRET` diferente entre o `app` e o `worker` — acontece se o `.env.local` foi editado à mão. Veja `logs -f worker`.
 
-**O download não anda.** Porta 4240 fechada no roteador, ou o torrent não tem seeds. A aba **Status** mostra os peers que o worker achou.
+**O download está lento.** Três coisas mandam nisso, nesta ordem:
+
+1. **A subida.** No BitTorrent quem não envia não recebe: os outros clientes
+   reciprocam na medida do que lhes chega. Por padrão não há limite
+   (`WORKER_UPLOAD_MBIT=0`). Se a sua internet engasga com a subida cheia,
+   ponha um número ali — mas saiba que isso baixa a descida junto.
+2. **A porta 4240.** Sem ela só há conexões de saída, e metade do enxame fica
+   fora de alcance. O worker pede ao roteador por UPnP; `WORKER_UPNP=0`
+   desliga esse pedido.
+3. **O torrent.** Alguns simplesmente não têm seeds. A aba **Status** mostra
+   quantos peers o worker achou.
 
 ## Apagar tudo
 

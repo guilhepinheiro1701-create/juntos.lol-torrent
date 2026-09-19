@@ -5,9 +5,9 @@ import { translate } from './useT'
 
 describe('translate', () => {
   it('translates and falls back to english', () => {
-    expect(translate('en', 'home.continue')).toBe('Create room')
-    expect(translate('pt-BR', 'home.continue')).toBe('Criar sala')
-    expect(translate('fr', 'home.continue')).toBe('Create room')
+    expect(translate('en', 'home.continue')).toBe('Start')
+    expect(translate('pt-BR', 'home.continue')).toBe('Começar')
+    expect(translate('fr', 'home.continue')).toBe('Start')
   })
 
   it('has no em dash in any string', () => {

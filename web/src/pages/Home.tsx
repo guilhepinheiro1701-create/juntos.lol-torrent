@@ -1,23 +1,21 @@
 import { Suspense, useCallback, useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'react'
 import { AnimatePresence, motion, useReducedMotion, LayoutGroup } from 'motion/react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import { FolderOpen, LogIn, Puzzle, Upload } from 'lucide-react'
+import { FolderOpen, Puzzle, Upload } from 'lucide-react'
 import { YoutubeGlyph } from '../ui/YoutubeGlyph'
 import { useT } from '../i18n/useT'
 import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl, createRoomAndUploadYoutube, isUnreadableFile, youtubeFileName, type UploadProgress } from '../upload'
 import { BuildInfo } from '../components/BuildInfo'
 import { LibraryShelf } from '../components/LibraryShelf'
+import { StoragePicker } from '../components/StoragePicker'
 import { OfflineNotice } from '../components/OfflineNotice'
-import { library } from '../library'
 import { useOnline } from '../useOnline'
-import { roomCodeFrom } from '../roomCode'
 import { DiscordLink } from '../components/DiscordLink'
 import { JlocalDownload, JlocalStatus } from '../components/JlocalPill'
 import { useJLocal } from '../jlocal/status'
 import { PluginsPanel } from '../plugins/PluginsPanel'
 import { Onboarding } from '../onboarding/Onboarding'
 import { playError } from '../onboarding/sounds'
-import { caretToEndOnFocus } from '../ui/caret'
 import { useToast } from '../ui/toastContext'
 import { hasSeenOnboarding } from '../onboarding/seen'
 import { TorrentPicker } from '../components/TorrentPicker'
@@ -49,7 +47,7 @@ type HomeView = 'catalog' | 'manual' | 'status' | 'library'
 export { MAX_UPLOAD_BYTES }
 
 // The manual-upload panel's steps; false is the panel being shut.
-type ManualStep = false | 'menu' | 'file' | 'magnet' | 'youtube' | 'drive' | 'join'
+type ManualStep = false | 'menu' | 'file' | 'magnet' | 'youtube' | 'drive'
 const HISTORY_KEY = 'ss.room-history.v1'
 
 interface RoomHistoryEntry {
@@ -98,20 +96,16 @@ export function Home() {
   const params = useParams<{ type?: string; id?: string }>()
   const location = useLocation()
   const inputRef = useRef<HTMLInputElement>(null)
-  const [nickname, setNickname] = useState(() => localStorage.getItem('ss.nickname') ?? '')
   const [dragging, setDragging] = useState(false)
   const [starting, setStarting] = useState(false)
   const [progress, setProgress] = useState<UploadProgress | null>(null)
   const [error, setError] = useState('')
   const [history, setHistory] = useState<RoomHistoryEntry[]>(readHistory)
   const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null)
-  const [draftNickname, setDraftNickname] = useState(nickname)
   const reduceMotion = useReducedMotion()
   const { toast } = useToast()
   const [onboarding, setOnboarding] = useState(() => !hasSeenOnboarding())
   const [manualOpen, setManualOpen] = useState<ManualStep>('menu')
-  const [joinDraft, setJoinDraft] = useState('')
-  const [joinError, setJoinError] = useState('')
   const view: HomeView = location.pathname.startsWith('/status') ? 'status'
     : location.pathname.startsWith('/downloads') ? 'library'
       : location.pathname.startsWith('/catalog') || location.pathname.startsWith('/title/') ? 'catalog'
@@ -124,14 +118,10 @@ export function Home() {
   }
 
   const online = useOnline()
-  // The downloads tab appears once there is something in it, and stays while
-  // it is open: a fourth tab on a browser that has never downloaded anything
-  // is a door onto an empty room. With no internet it is there regardless,
-  // because it is the only room that still works.
-  const [hasDownloads] = useState(() => library().length > 0)
-  const tabs: HomeView[] = hasDownloads || view === 'library' || !online
-    ? ['catalog', 'manual', 'library', 'status']
-    : ['catalog', 'manual', 'status']
+  // Always the four. Hiding downloads until there was something in them read,
+  // from the outside, as the feature not existing at all — and a person cannot
+  // download a film through a tab they have never been shown.
+  const tabs: HomeView[] = ['catalog', 'manual', 'library', 'status']
 
   useEffect(() => {
     setError('')
@@ -174,7 +164,6 @@ export function Home() {
     }
     setError('')
     setManualOpen(false)
-    setDraftNickname(nickname)
     setPendingMedia({ kind: 'local', file })
   }
 
@@ -191,7 +180,6 @@ export function Home() {
 
   const pickStream = (pick: TitlePick) => {
     setError('')
-    setDraftNickname(nickname)
     setPendingMedia({ kind: 'stream', pick })
   }
 
@@ -209,20 +197,20 @@ export function Home() {
       let room
       let fileName = ''
       if (media.kind === 'local') {
-        room = await createRoomAndUpload(media.file, draftNickname.trim(), setProgress)
+        room = await createRoomAndUpload(media.file, '', setProgress)
         fileName = media.file.name
       } else if (media.kind === 'torrent') {
-        room = await createRoomAndUploadTorrent({ file: media.file, session: media.session }, draftNickname.trim(), setProgress)
+        room = await createRoomAndUploadTorrent({ file: media.file, session: media.session }, '', setProgress)
         fileName = media.file.name
       } else if (media.kind === 'youtube') {
-        room = await createRoomAndUploadYoutube(media.session, draftNickname.trim())
+        room = await createRoomAndUploadYoutube(media.session, '')
         fileName = youtubeFileName(media.session)
       } else if (media.kind === 'drive') {
         // The picker already selected the file; resolve its ranged Drive URL
         // and sidecars, then create the room onto a client-remuxed URL source.
         const playback = await drivePlaybackUrls(media.file, media.session)
         try {
-          room = await createRoomAndUploadUrl(playback.url, media.file.name, media.file.size, draftNickname.trim(), playback.sideFiles)
+          room = await createRoomAndUploadUrl(playback.url, media.file.name, media.file.size, '', playback.sideFiles)
         } catch (error) {
           media.session.destroy()
           throw error
@@ -231,7 +219,7 @@ export function Home() {
       } else if (media.kind === 'stream' && media.pick.stream.location.kind === 'url') {
         closeTitle()
         const { url } = media.pick.stream.location
-        room = await createRoomAndUploadUrl(url, `${media.pick.displayName}.mkv`, 0, draftNickname.trim())
+        room = await createRoomAndUploadUrl(url, `${media.pick.displayName}.mkv`, 0, '')
         fileName = media.pick.displayName
         const playing = nowPlayingFromPick(media.pick)
         try {
@@ -244,7 +232,7 @@ export function Home() {
         const opened = await openCatalogStream(media.pick.stream, media.pick.target, undefined, { onProbe: setStreamProbes })
         setProgress(null)
         try {
-          room = await createRoomAndUploadTorrent(opened, draftNickname.trim(), setProgress)
+          room = await createRoomAndUploadTorrent(opened, '', setProgress)
         } catch (error) {
           opened.session.destroy()
           throw error
@@ -255,8 +243,6 @@ export function Home() {
           if (playing) localStorage.setItem(nowPlayingKey(room.roomID), JSON.stringify(playing))
         } catch {}
       }
-      setNickname(room.nickname)
-      localStorage.setItem('ss.nickname', room.nickname)
       const nextHistory = [
         { id: room.roomID, fileName, createdAt: Date.now() },
         ...history.filter((entry) => entry.id !== room.roomID),
@@ -311,9 +297,6 @@ export function Home() {
             <button onClick={() => { setError(''); setManualOpen('drive') }}>
               <FolderOpen size={18} aria-hidden="true" />{t('home.openDrive')}
             </button>
-            <button onClick={() => { setJoinDraft(''); setJoinError(''); setManualOpen('join') }}>
-              <LogIn size={18} aria-hidden="true" />{t('home.joinRoom')}
-            </button>
           </div>
         </div>
       ) : null}
@@ -341,41 +324,6 @@ export function Home() {
         </div>
       ) : null}
 
-      {shownManual === 'join' ? (
-        <div className="morph-step" data-step="join">
-          <div className="morph-head">
-            <StepBack label={t('home.back')} onClick={() => setManualOpen('menu')} />
-            <h2 className="stage-title">{t('home.joinRoom')}</h2>
-          </div>
-          <p className="stage-description">{t('home.joinGuide')}</p>
-          <form
-            className="join-room-form"
-            onSubmit={(event) => {
-              event.preventDefault()
-              const code = roomCodeFrom(joinDraft)
-              if (!code) { setJoinError(t('home.joinBadCode')); return }
-              navigate(`/room/${code}`)
-            }}
-          >
-            <input
-              className="sunken text-field"
-              autoFocus
-              value={joinDraft}
-              spellCheck={false}
-              autoCapitalize="characters"
-              autoCorrect="off"
-              placeholder={t('home.joinPlaceholder')}
-              aria-label={t('home.joinRoom')}
-              onChange={(event) => { setJoinDraft(event.target.value); setJoinError('') }}
-            />
-            <button type="submit" className="primary-button" disabled={!roomCodeFrom(joinDraft)}>
-              {t('home.joinGo')}
-            </button>
-          </form>
-          {joinError ? <p className="stage-error" role="alert">{joinError}</p> : null}
-        </div>
-      ) : null}
-
       {shownManual === 'magnet' ? (
         <div className="morph-step" data-step="magnet">
           <TorrentPicker
@@ -388,7 +336,6 @@ export function Home() {
             onPicked={(file, session, magnet) => {
               setResumed({ magnet, session })
               setManualOpen(false)
-              setDraftNickname(nickname)
               setPendingMedia({ kind: 'torrent', file, session })
             }}
           />
@@ -403,7 +350,6 @@ export function Home() {
             onExit={() => setManualOpen('menu')}
             onPicked={(session) => {
               setManualOpen(false)
-              setDraftNickname(nickname)
               setPendingMedia({ kind: 'youtube', session })
             }}
           />
@@ -419,7 +365,6 @@ export function Home() {
             onExit={() => setManualOpen('menu')}
             onPicked={(file, session) => {
               setManualOpen(false)
-              setDraftNickname(nickname)
               setPendingMedia({ kind: 'drive', file, session })
             }}
           />
@@ -568,8 +513,12 @@ export function Home() {
                     : pendingMedia.file.name}
             </span>
             <form onSubmit={(event) => { event.preventDefault(); void startUpload() }}>
-              <label htmlFor="nickname">{t('home.nickname')}</label>
-              <input id="nickname" className="sunken" autoFocus value={draftNickname} maxLength={64} placeholder={t('home.nicknamePlaceholder')} onFocus={caretToEndOnFocus} onChange={(event) => setDraftNickname(event.target.value)} />
+              {/* Onde o filme vai parar, perguntado no unico momento em que a
+                  pergunta cabe: depois de escolher o que assistir e antes de
+                  baixar qualquer coisa. Antes isto vivia dentro da aba
+                  Baixados, que so aparecia depois do primeiro download — ou
+                  seja, depois de ja ter sido gravado em algum lugar. */}
+              <StoragePicker t={t} />
               <div className="dialog-actions">
                 <Button onClick={() => {
                   discardPending(pendingMedia)

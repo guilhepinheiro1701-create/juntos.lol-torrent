@@ -1,33 +1,30 @@
-> **Nota:** este README ainda descreve a versão em nuvem, com watch party, chat,
-> compartilhamento de tela e reprodução sincronizada. Esta ramificação removeu
-> tudo isso: é um app de um espectador só, na própria máquina. Veja
-> [RODAR-LOCAL.md](RODAR-LOCAL.md) para o que existe hoje. A atualização do
-> resto deste arquivo ainda não foi feita.
+> **Nota:** desta linha em diante, as seções de arquitetura ainda descrevem a
+> versão em nuvem — salas compartilhadas, chat, compartilhamento de tela,
+> reprodução sincronizada. Esta ramificação removeu tudo isso. O resumo abaixo
+> está correto; o miolo do arquivo ainda não foi reescrito. Para instalar e
+> usar, veja [RODAR-LOCAL.md](RODAR-LOCAL.md).
 
-# juntos.lol
+# juntos.lol, na sua máquina
 
-[juntos.lol](https://juntos.lol) é uma aplicação de watch party: envie um vídeo ou abra um magnet, compartilhe a sala e assista com outras pessoas usando reprodução sincronizada, chat, múltiplos áudios, legendas e compartilhamento de tela.
+Um app de cinema para **um espectador só**, rodando inteiro no seu computador:
+você escolhe um filme, ele é baixado aqui e toca aqui. Não há conta, não há
+nuvem, não há link para mandar a ninguém. Fora desta máquina só saem o torrent
+e as buscas no catálogo.
 
 ![Prévia do player](web/public/social-card.png)
 
 ## O que está pronto
 
-- o vídeo de um arquivo local ou de uma url é preparado no navegador de quem abre a sala: remux para HLS com [mediabunny](https://mediabunny.dev) e envio dos segmentos direto para o bucket, sem nenhum byte de vídeo e nenhum ffmpeg no servidor;
-- início progressivo: a sala começa a tocar com os primeiros segmentos publicados, sem esperar o remux inteiro;
+- catálogo buscável, com as fontes vindas de plugins que você instala, num worker sem acesso a rede;
+- torrent baixado pelo ss-worker desta instalação, com início progressivo: começa a tocar com os primeiros segmentos, sem esperar o download inteiro;
+- **escolha de disco** antes de baixar, entre os lugares que a instalação declara — a página manda um rótulo, nunca um caminho;
+- **baixar para assistir offline**: o arquivo fica no disco de verdade, sobrevive a reiniciar o worker, e a aba Baixados reabre sem internet nenhuma;
+- o vídeo de um arquivo local ou de uma url é preparado no próprio navegador: remux para HLS com [mediabunny](https://mediabunny.dev), sem nenhum byte de vídeo e nenhum ffmpeg no servidor;
+- os segmentos ficam numa pasta servida pelo próprio servidor — sem bucket, sem outra origem, sem senha;
 - player responsivo com tela cheia, controles que somem durante a reprodução e suporte a HLS nativo ou `hls.js`;
-- sincronização de play, pause, seek e velocidade por WebSocket;
-- chat e lista de participantes por sala;
-- seleção de faixas de áudio e legendas de texto;
-- extração de legendas MKV no navegador, publicadas enquanto o remux continua;
-- link do YouTube preparado sem o player do YouTube: o [jlocal](https://github.com/giulianoo0/jlocal) do host ou um ss-worker resolve o vídeo com yt-dlp e remuxa com FFmpeg; áudios dublados viram faixas, legendas manuais e a automática viram WebVTT, capítulos entram na sala e o seek frio abre região nova como num torrent;
-- torrent baixado por workers remotos (ss-worker) que o servidor despacha, sem nada para instalar, com os arquivos `.srt` e `.ass` que acompanham o vídeo publicados durante o download;
-- tela de espera com a fase da preparação e uma estimativa de quando dá para começar a assistir;
-- torrents com seleção de arquivo, sem nenhum download no servidor;
-- entrada por link pedindo apenas o apelido, com aviso de quem entra e quem sai da sala;
-- compartilhamento de tela ao vivo por MoQ (Media over QUIC) através de um relay da Cloudflare, com o áudio da tela quando o navegador o oferece;
-- interface em português e inglês;
-- histórico local de salas e metadados Open Graph, Twitter Card e oEmbed;
-- catálogo buscável com fontes vindas de plugins que o host instala, num worker sem acesso a rede; a documentação está em [juntos.lol/docs](https://juntos.lol/docs).
+- seleção de faixas de áudio e legendas de texto, com extração de legendas MKV no navegador;
+- link do YouTube preparado sem o player do YouTube, e arquivos do Google Drive;
+- interface em português e inglês. A documentação dos plugins está em [juntos.lol/docs](https://juntos.lol/docs).
 
 ## Como funciona
 

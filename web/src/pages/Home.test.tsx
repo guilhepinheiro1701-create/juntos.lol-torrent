@@ -62,12 +62,11 @@ describe('Home', () => {
 
   it('opens on the manual tab and starts upload after file selection', async () => {
     render(<MemoryRouter><Home /></MemoryRouter>)
-    expect(screen.getByRole('tab', { name: /room|sala/i })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: /^open$|^abrir$/i })).toHaveAttribute('aria-selected', 'true')
     await openFilePanel()
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     fireEvent.change(input, { target: { files: [new File(['video'], 'movie.mkv', { type: 'video/x-matroska' })] } })
-    fireEvent.change(screen.getByLabelText(/your name|seu nome/i), { target: { value: 'giuli' } })
-    fireEvent.click(screen.getByRole('button', { name: /create room|criar sala/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^start$|^começar$/i }))
     await waitFor(() => expect(createRoomAndUpload).toHaveBeenCalledOnce())
     const history = JSON.parse(localStorage.getItem('ss.room-history.v1') ?? '[]') as Array<Record<string, unknown>>
     expect(history[0]).toMatchObject({ fileName: 'movie.mkv', id: 'room1234' })
@@ -85,17 +84,20 @@ describe('Home', () => {
     expect(createRoomAndUpload).not.toHaveBeenCalled()
   })
 
-  it('uses the server-generated name when the name is blank', async () => {
+  // Nobody is shown this name any more, so nobody is asked for it: the server
+  // makes one up and the page never has to keep it.
+  it('never asks for a name, and never keeps the one the server makes up', async () => {
     vi.mocked(createRoomAndUpload).mockResolvedValue({ roomID: 'room1234', nickname: 'Guest-abc123' })
     render(<MemoryRouter><Home /></MemoryRouter>)
     await openFilePanel()
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     fireEvent.change(input, { target: { files: [new File(['video'], 'movie.mkv', { type: 'video/x-matroska' })] } })
-    fireEvent.click(screen.getByRole('button', { name: /create room|criar sala/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^start$|^começar$/i }))
 
     await waitFor(() => expect(createRoomAndUpload).toHaveBeenCalledOnce())
+    expect(screen.queryByLabelText(/your name|seu nome/i)).not.toBeInTheDocument()
     expect(createRoomAndUpload).toHaveBeenCalledWith(expect.any(File), '', expect.any(Function))
-    expect(localStorage.getItem('ss.nickname')).toBe('Guest-abc123')
+    expect(localStorage.getItem('ss.nickname')).toBeNull()
   })
 
   it('shows a preparing state while an mp4 is being converted', async () => {
@@ -107,7 +109,7 @@ describe('Home', () => {
     await openFilePanel()
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     fireEvent.change(input, { target: { files: [new File(['video'], 'movie.mp4', { type: 'video/mp4' })] } })
-    fireEvent.click(screen.getByRole('button', { name: /create room|criar sala/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^start$|^começar$/i }))
 
     expect(await screen.findByText(/preparing video|preparando o vídeo/i)).toBeInTheDocument()
     expect(screen.getByText('42%')).toBeInTheDocument()
@@ -128,7 +130,7 @@ describe('Home', () => {
     await openFilePanel()
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     fireEvent.change(input, { target: { files: [new File(['video'], 'movie.mkv', { type: 'video/x-matroska' })] } })
-    fireEvent.click(screen.getByRole('button', { name: /create room|criar sala/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^start$|^começar$/i }))
 
     expect(await screen.findByText('room page')).toBeInTheDocument()
   })
@@ -155,8 +157,8 @@ describe('Home', () => {
     expect(screen.getByRole('button', { name: /episode-01\.mkv/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /episode-02\.mkv/i })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /episode-02\.mkv/i }))
-    await screen.findByRole('heading', { name: /what should we call|como devemos chamar/i })
-    fireEvent.click(screen.getByRole('button', { name: /create room|criar sala/i }))
+    await screen.findByRole('heading', { name: /ready to start|pronto para começar/i })
+    fireEvent.click(screen.getByRole('button', { name: /^start$|^começar$/i }))
 
     await waitFor(() => expect(createRoomAndUploadTorrent).toHaveBeenCalledOnce())
     expect(createRoomAndUploadTorrent).toHaveBeenCalledWith(
@@ -181,12 +183,12 @@ describe('build info', () => {
 describe('the downloads tab', () => {
   beforeEach(() => localStorage.clear())
 
-  // A fourth tab on a browser that has never downloaded anything is a door
-  // onto an empty room.
-  it('stays hidden until something has been downloaded', () => {
+  // It used to appear only once there was something in it, which meant nobody
+  // who had never downloaded anything could find out that they could.
+  it('is there before anything has been downloaded', () => {
     render(<MemoryRouter><Home /></MemoryRouter>)
 
-    expect(screen.queryByRole('tab', { name: /downloads|baixados/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /downloads|baixados/i })).toBeInTheDocument()
   })
 
   it('appears once the library holds something, and opens onto it', async () => {

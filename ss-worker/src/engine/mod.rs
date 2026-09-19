@@ -296,7 +296,7 @@ impl Engine {
         opts.listen = Some(ListenerOptions {
             mode: ListenerMode::TcpAndUtp,
             listen_addr: (std::net::Ipv6Addr::UNSPECIFIED, cfg.bt_listen_port).into(),
-            enable_upnp_port_forwarding: false,
+            enable_upnp_port_forwarding: cfg.upnp,
             ..Default::default()
         });
         opts.connect = Some(ConnectionOptions {

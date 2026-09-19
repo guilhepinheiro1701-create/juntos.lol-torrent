@@ -86,6 +86,15 @@ services:
       SS_WORKER_BT_PORT: "4240"
       SS_WORKER_DISK_QUOTA_GB: ${WORKER_DISK_QUOTA_GB:-35}
       SS_WORKER_MAX_LEASES: ${WORKER_MAX_LEASES:-8}
+      # Quantos peers por torrent. Aqui o enxame inteiro é seu.
+      SS_WORKER_PEER_LIMIT: ${WORKER_PEER_LIMIT:-150}
+      # Subida em Mbit/s; 0 é sem limite. No BitTorrent quem não envia não
+      # recebe, então limitar a subida limita a descida junto. Ponha um número
+      # se a sua internet engasga com a subida cheia.
+      SS_WORKER_UPLOAD_MBIT: ${WORKER_UPLOAD_MBIT:-0}
+      # Pede ao roteador para abrir a porta 4240 sozinho. 0 desliga, para quem
+      # já abriu na mão ou não quer que o programa fale com o roteador.
+      SS_WORKER_UPNP: ${WORKER_UPNP:-1}
       SS_WORKER_RELAY_UPSTREAM: http://app:8080
       # Mais de um disco? Veja WORKER_STORAGE_DIRS no .env.local. Cada caminho
       # aqui é de dentro do container, então precisa vir montado em `volumes`.

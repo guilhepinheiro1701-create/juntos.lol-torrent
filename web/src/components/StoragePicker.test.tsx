@@ -19,14 +19,31 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks())
 
 describe('StoragePicker', () => {
-  // A choice between one thing is not a choice, and this is what an ordinary
-  // install looks like.
-  it.each([[[] as string[]], [['SSD']]])('shows nothing when the fleet offers %j', async (labels) => {
-    offer(...labels)
+  it('shows nothing when the fleet offers no place at all', async () => {
+    offer()
     const { container } = render(<StoragePicker t={t} />)
 
     await waitFor(() => expect(storagePlaces).toHaveBeenCalled())
     expect(container).toBeEmptyDOMElement()
+  })
+
+  // An ordinary install offers exactly one place. Hiding the picker there left
+  // the person with no way to see where their films go, and nowhere to read
+  // that a second disk can be added — which read as the feature not existing.
+  it('shows the single place an ordinary install offers, and how to add more', async () => {
+    offer('SSD')
+    render(<StoragePicker t={t} />)
+
+    expect(await screen.findByRole('radio', { name: /SSD/ })).toBeInTheDocument()
+    expect(screen.getByText('storage.addMore')).toBeInTheDocument()
+  })
+
+  it('does not nag about adding disks once there are two', async () => {
+    offer('SSD', 'HDD')
+    render(<StoragePicker t={t} />)
+
+    await screen.findByRole('radio', { name: /HDD/ })
+    expect(screen.queryByText('storage.addMore')).not.toBeInTheDocument()
   })
 
   it('offers each place and remembers the one picked', async () => {

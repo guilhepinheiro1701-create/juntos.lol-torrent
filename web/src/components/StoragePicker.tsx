@@ -11,8 +11,10 @@ import { setStoragePreference, storagePreference } from '../storagePlace'
  * store things, and this picks among those. A browser never names a path, so
  * there is nothing here to point somewhere it should not go.
  *
- * Nothing shows when the fleet offers one place or none, which is every
- * ordinary install: a choice between one thing is not a choice.
+ * It shows even when the installation offers a single place. Hiding it there
+ * was a mistake: from the outside, a choice you are never shown is a choice
+ * that does not exist, and the one line explaining how to add a second disk
+ * has nowhere else to live.
  */
 export function StoragePicker({ t }: { t: Translator }) {
   const [places, setPlaces] = useState<StoragePlace[]>([])
@@ -31,7 +33,9 @@ export function StoragePicker({ t }: { t: Translator }) {
   const stale = chosen !== '' && places.length > 0
     && !places.some((place) => place.label.toLowerCase() === chosen.toLowerCase())
 
-  if (places.length < 2 && !stale) return null
+  // Only with nothing at all to say: the workers have not answered yet, or
+  // there are none.
+  if (places.length === 0 && !stale) return null
 
   const choose = (label: string) => {
     setStoragePreference(label)
@@ -71,6 +75,7 @@ export function StoragePicker({ t }: { t: Translator }) {
           </button>
         ))}
       </div>
+      {places.length < 2 ? <p className="storage-more">{t('storage.addMore')}</p> : null}
     </section>
   )
 }

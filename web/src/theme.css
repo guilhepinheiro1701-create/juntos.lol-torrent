@@ -1055,6 +1055,9 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .storage-options button { display: inline-flex; align-items: baseline; gap: 8px; padding: 9px 14px; border: 1px solid var(--border); border-radius: 999px; color: var(--text-dim); background: rgba(255,255,255,.03); font-size: 13px; }
 .storage-options button:hover { color: var(--text); background: var(--card-hover); }
 .storage-options button.is-chosen { border-color: rgba(255,122,69,.45); color: var(--text); background: var(--primary-soft); }
+.storage-picker .storage-more { margin: 12px 0 0; font-size: 12px; line-height: 1.5; color: var(--text-dim); opacity: .8; }
+/* Dentro do dialogo de comecar, a caixa nao precisa da borda: o dialogo ja e uma. */
+.ui-dialog .storage-picker { margin: 4px 0 14px; padding: 0; border: 0; background: none; }
 .storage-free { color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
 
 /* Sem internet: o catálogo não tem o que mostrar, os baixados têm. */
