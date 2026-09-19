@@ -175,6 +175,14 @@ outra coisa enquanto ele baixa. A aba **Baixados** mostra a fila com a
 porcentagem de cada um. Pode até fechar o navegador — quem baixa é o worker,
 não a página.
 
+Se o computador desligar no meio, ou o Docker fechar, **o download continua de
+onde parou**. Os bytes ficam no disco — o worker poupa as pastas marcadas
+quando sobe — e o site reabre o trabalho assim que você entra, conferindo o que
+já está lá antes de pedir o que falta. Não baixa de novo o que já tinha.
+
+> Isso vale enquanto a pasta for a mesma. Se você trocar o disco no
+> `pasta.bat` entre uma vez e outra, o filme recomeça, porque o lugar é outro.
+
 **Baixar** — o botão durante a exibição, para quando você já está assistindo e
 decide guardar. O arquivo fica no disco de verdade: sobrevive a reiniciar o worker, e a aba **Baixados** reabre sem internet. Devolver o espaço é um clique na mesma tela.
 

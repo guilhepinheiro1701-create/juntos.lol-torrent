@@ -280,6 +280,8 @@ export const en: Record<string, string> = {
   'storage.stale': 'The disk you chose is not being offered right now, so the next film would be refused. Pick another one.',
   'library.title': 'Downloaded',
   'library.checking': 'Checking…',
+  'library.resuming': 'Picking up where it stopped…',
+  'library.resumeFailed': 'Could not continue this download.',
   'library.complete': 'Complete on disk',
   'library.play': 'Watch',
   'library.opening': 'Opening',

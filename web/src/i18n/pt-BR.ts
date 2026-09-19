@@ -280,6 +280,8 @@ export const ptBR: Record<string, string> = {
   'storage.stale': 'O disco escolhido não está sendo oferecido agora, então o próximo filme seria recusado. Escolha outro.',
   'library.title': 'Baixados',
   'library.checking': 'Conferindo…',
+  'library.resuming': 'Continuando de onde parou…',
+  'library.resumeFailed': 'Não foi possível continuar este download.',
   'library.complete': 'Completo no disco',
   'library.play': 'Assistir',
   'library.opening': 'Abrindo',

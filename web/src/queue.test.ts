@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { NoVideoInTorrentError, queueDownload } from './queue'
+import { forgetResumeAttempts, NoVideoInTorrentError, queueDownload, resumeInterrupted } from './queue'
 import type { TorrentSession } from './torrent'
 
 const MAGNET = 'magnet:?xt=urn:btih:' + 'ab'.repeat(20) + '&dn=Duna'
@@ -81,6 +81,75 @@ describe('pôr um filme na fila sem abrir o player', () => {
   it('recusa um magnet sem infohash antes de tocar na rede', async () => {
     const open = vi.fn()
     await expect(queueDownload({ magnet: 'magnet:?dn=nada' }, { open })).rejects.toThrow()
+    expect(open).not.toHaveBeenCalled()
+  })
+})
+
+// O pc desliga, ou o docker fecha. Os bytes continuam no disco — o kept.json
+// do worker poupa essas pastas da varredura de subida — mas o trabalho que
+// sabia do download morreu junto, e ate agora nada mandava continuar.
+describe('retomar o que ficou pela metade', () => {
+  const GB = 1_073_741_824
+  const entrada = (over: Record<string, unknown> = {}) => ({
+    roomId: 'r1', jobId: 'j-morto', fileName: 'Duna.mkv', title: 'Duna',
+    poster: 'https://img.test/d.jpg', magnet: MAGNET, filePath: 'x/Duna.mkv',
+    have: 8 * GB, total: 10 * GB, savedAt: 1, ...over,
+  })
+
+  beforeEach(() => forgetResumeAttempts())
+
+  it('reabre o trabalho a partir do magnet, mantendo capa e nome', async () => {
+    const session = sessaoFalsa()
+    const bind = vi.fn()
+
+    const feitas = await resumeInterrupted({
+      list: () => [entrada()] as never,
+      look: async () => 'gone',
+      bind,
+      open: async () => session,
+      keep: vi.fn().mockResolvedValue(undefined),
+      save: vi.fn(),
+    })
+
+    expect(feitas).toHaveLength(1)
+    expect(session.select).toHaveBeenCalledWith('x/Duna.mkv')
+    expect(bind).toHaveBeenCalledWith('r1', 'j1')
+  })
+
+  it('deixa em paz o que já estava completo', async () => {
+    const open = vi.fn()
+    await resumeInterrupted({ list: () => [entrada({ have: 10 * GB, total: 10 * GB })] as never, look: async () => 'gone', open })
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  // "Não consegui perguntar" é diferente de "o trabalho não existe": recomeçar
+  // por uma falha de rede criaria trabalho duplicado no worker.
+  it('não recomeça quando a pergunta apenas falhou', async () => {
+    const open = vi.fn()
+    await resumeInterrupted({ list: () => [entrada()] as never, look: async () => null, open })
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  it('não recomeça o que está vivo', async () => {
+    const open = vi.fn()
+    const vivo = { kept: 'kept' as const, progress: 0.8, haveBytes: 8, totalBytes: 10, downSpeed: 1, state: 'running' }
+    await resumeInterrupted({ list: () => [entrada()] as never, look: async () => vivo, open })
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  it('tenta uma vez só por sessão, mesmo falhando', async () => {
+    const open = vi.fn().mockRejectedValue(new Error('enxame mudo'))
+    const deps = { list: () => [entrada()] as never, look: async () => 'gone' as const, open, bind: vi.fn() }
+
+    await resumeInterrupted(deps)
+    await resumeInterrupted(deps)
+
+    expect(open).toHaveBeenCalledOnce()
+  })
+
+  it('ignora uma entrada sem magnet, que não tem como reabrir', async () => {
+    const open = vi.fn()
+    await resumeInterrupted({ list: () => [entrada({ magnet: undefined })] as never, look: async () => 'gone', open })
     expect(open).not.toHaveBeenCalled()
   })
 })

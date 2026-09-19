@@ -1,6 +1,6 @@
-import { keepTorrent, parseMagnet } from './remoteTorrent'
+import { jobProgress, keepTorrent, parseMagnet, type JobLook } from './remoteTorrent'
 import { openTorrent, type TorrentSession, type TorrentVideoFile } from './torrent'
-import { queueKey, remember } from './library'
+import { library, queueKey, rebind, remember, type LibraryEntry } from './library'
 
 /**
  * Baixar um filme sem abrir o player.
@@ -93,4 +93,70 @@ function pick(session: TorrentSession, filePath?: string): TorrentVideoFile | un
   }
   // O maior arquivo de video e o filme; os outros sao extras e trailers.
   return [...session.files].sort((a, b) => b.size - a.size)[0]
+}
+
+/**
+ * Retoma o que ficou pela metade quando o worker reiniciou.
+ *
+ * O pc desliga, o docker fecha, e o trabalho que sabia do download morre com
+ * ele. Os bytes continuam no disco — o registro `kept.json` do worker poupa
+ * essas pastas da varredura de subida —, mas ninguem esta baixando o que
+ * falta. Isto reabre o trabalho a partir do magnet; nada e baixado de novo,
+ * porque o baixador confere o que ja esta la antes de pedir o resto.
+ *
+ * Uma tentativa por entrada e por sessao da pagina: se o enxame estiver mudo,
+ * insistir em ciclo so faria barulho.
+ */
+const tentadas = new Set<string>()
+
+/** Se o que foi anotado da ultima vez diz que faltava coisa. */
+export function incomplete(entry: LibraryEntry): boolean {
+  if (entry.total === undefined || entry.have === undefined) return true
+  return entry.total > 0 && entry.have < entry.total
+}
+
+export interface ResumeDeps extends QueueDeps {
+  list?: () => LibraryEntry[]
+  look?: (jobId: string) => Promise<JobLook>
+  bind?: (roomId: string, jobId: string) => void
+  onStart?: (entry: LibraryEntry) => void
+  onDone?: (entry: LibraryEntry) => void
+}
+
+export async function resumeInterrupted(deps: ResumeDeps = {}): Promise<LibraryEntry[]> {
+  const list = deps.list ?? library
+  const look = deps.look ?? jobProgress
+  const bind = deps.bind ?? rebind
+
+  const retomadas: LibraryEntry[] = []
+  for (const entry of list()) {
+    if (tentadas.has(entry.roomId) || !entry.magnet || !incomplete(entry)) continue
+    // 'gone' e o unico sinal que pede recomeco: `null` e "nao consegui
+    // perguntar", e recomecar por causa de uma falha de rede criaria trabalho
+    // duplicado no worker.
+    if (await look(entry.jobId) !== 'gone') continue
+
+    tentadas.add(entry.roomId)
+    deps.onStart?.(entry)
+    try {
+      const posto = await queueDownload({
+        magnet: entry.magnet,
+        title: entry.title,
+        poster: entry.poster,
+        filePath: entry.filePath,
+      }, deps)
+      bind(entry.roomId, posto.jobId)
+      retomadas.push(entry)
+    } catch (error) {
+      console.error('resuming a download failed', error)
+    } finally {
+      deps.onDone?.(entry)
+    }
+  }
+  return retomadas
+}
+
+/** Só para os testes: esquece quem já foi tentada nesta sessão. */
+export function forgetResumeAttempts(): void {
+  tentadas.clear()
 }

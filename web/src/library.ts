@@ -28,6 +28,16 @@ export interface LibraryEntry {
   poster?: string
   magnet?: string
   filePath?: string
+  /**
+   * Quanto ja tinha chegado da ultima vez que alguem olhou.
+   *
+   * Sem isto, depois de o worker reiniciar nao ha como saber se aquele filme
+   * estava completo ou parado nos oitenta por cento: o trabalho que sabia
+   * disso morreu junto. Guardado aqui, a aba Baixados reconhece o que ficou
+   * pela metade e manda continuar.
+   */
+  have?: number
+  total?: number
   savedAt: number
 }
 
@@ -76,6 +86,33 @@ export function remember(entry: Omit<LibraryEntry, 'savedAt'>): void {
     && !(entry.magnet !== undefined && held.magnet === entry.magnet)
   ))
   write([{ ...entry, savedAt: Date.now() }, ...outros])
+}
+
+/**
+ * Anota o quanto ja chegou, sem tocar no resto do registro.
+ *
+ * Silencioso quando a entrada nao existe: a aba Baixados pergunta pelo
+ * progresso de tudo o que lista, e uma linha apagada no meio disso e um caso
+ * normal, nao um erro.
+ */
+export function noteProgress(roomId: string, have: number, total: number): void {
+  const todas = read()
+  const achada = todas.find((entry) => entry.roomId === roomId)
+  if (!achada) return
+  if (achada.have === have && achada.total === total) return
+  write(todas.map((entry) => (entry.roomId === roomId ? { ...entry, have, total } : entry)))
+}
+
+/**
+ * Troca o trabalho de uma entrada por outro, mantendo o resto.
+ *
+ * E o que uma retomada faz: o arquivo e o mesmo, a capa e a mesma, so o
+ * trabalho no worker e novo.
+ */
+export function rebind(roomId: string, jobId: string): void {
+  const todas = read()
+  if (!todas.some((entry) => entry.roomId === roomId)) return
+  write(todas.map((entry) => (entry.roomId === roomId ? { ...entry, jobId } : entry)))
 }
 
 /** A chave de um download que ainda nao tem sala. */

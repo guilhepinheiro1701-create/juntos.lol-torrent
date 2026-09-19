@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Film, Play, Trash2 } from 'lucide-react'
 import type { Translator } from '../i18n/useT'
-import { forget, library, type LibraryEntry } from '../library'
+import { forget, library, noteProgress, type LibraryEntry } from '../library'
 import { openTorrent } from '../torrent'
 import { createRoomAndUploadTorrent } from '../upload'
 import { jobProgress, keepTorrent, type JobProgress } from '../remoteTorrent'
+import { resumeInterrupted } from '../queue'
 import { useToast } from '../ui/toastContext'
 import { StoragePicker } from './StoragePicker'
 
@@ -41,27 +42,55 @@ export function LibraryShelf({ t, onOpened }: {
   // houver algum incompleto, perguntamos ao worker de tres em tres segundos; no
   // instante em que todos chegarem ao fim, paramos de perguntar.
   const [progress, setProgress] = useState<Record<string, JobProgress>>({})
+  const [resuming, setResuming] = useState<Record<string, true>>({})
   const jobIds = entries.map((entry) => entry.jobId).join(',')
   const stop = useRef(false)
   useEffect(() => {
     if (jobIds === '') return
     stop.current = false
     let timer: ReturnType<typeof setTimeout> | null = null
+
     const look = async () => {
-      const ids = jobIds.split(',')
-      const answers = await Promise.all(ids.map((id) => jobProgress(id)))
+      const agora = library()
+      const answers = await Promise.all(agora.map((entry) => jobProgress(entry.jobId)))
       if (stop.current) return
+
       const next: Record<string, JobProgress> = {}
-      ids.forEach((id, n) => { const answer = answers[n]; if (answer) next[id] = answer })
+      agora.forEach((entry, n) => {
+        const answer = answers[n]
+        if (!answer || answer === 'gone') return
+        next[entry.jobId] = answer
+        if (answer.totalBytes > 0) noteProgress(entry.roomId, answer.haveBytes, answer.totalBytes)
+      })
       setProgress(next)
-      const done = Object.values(next).every((one) => one.progress !== null && one.progress >= 1)
+
+      // Quem decide o que retomar e o queue.ts, que e o mesmo caminho usado na
+      // subida do site: aqui so mostramos o que esta acontecendo.
+      const faltando = answers.some((answer) => answer === 'gone')
+      if (faltando) {
+        await resumeInterrupted({
+          onStart: (entry) => setResuming((held) => ({ ...held, [entry.roomId]: true })),
+          onDone: (entry) => setResuming((held) => {
+            const { [entry.roomId]: _, ...rest } = held
+            return rest
+          }),
+        })
+        refresh()
+      }
+
+      const done = !faltando
+        && Object.values(next).every((one) => one.progress !== null && one.progress >= 1)
       if (!done) timer = setTimeout(() => { void look() }, POLL_MS)
     }
+
     void look()
     return () => {
       stop.current = true
       if (timer !== null) clearTimeout(timer)
     }
+    // `entries` nao entra: a lista e relida a cada volta, e po-la aqui
+    // reiniciaria o ciclo a cada gravacao de progresso.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobIds])
 
   const open = async (entry: LibraryEntry) => {
@@ -134,7 +163,7 @@ export function LibraryShelf({ t, onOpened }: {
                 {entry.title || entry.fileName}
               </span>
               {entry.title ? <span className="library-file">{entry.fileName}</span> : null}
-              <LibraryProgress entry={entry} at={progress[entry.jobId]} t={t} />
+              <LibraryProgress entry={entry} at={progress[entry.jobId]} resuming={resuming[entry.roomId] === true} t={t} />
             </div>
             <div className="library-actions">
               <button
@@ -184,7 +213,8 @@ export function LibraryShelf({ t, onOpened }: {
  * quando acabou. Sem resposta do worker ela nao aparece — dizer "0%" quando na
  * verdade nao se sabe e pior que nao dizer nada.
  */
-function LibraryProgress({ entry, at, t }: { entry: LibraryEntry; at?: JobProgress; t: Translator }) {
+function LibraryProgress({ entry, at, resuming, t }: { entry: LibraryEntry; at?: JobProgress; resuming?: boolean; t: Translator }) {
+  if (resuming) return <span className="library-line is-quiet">{t('library.resuming')}</span>
   if (!at) return <span className="library-line is-quiet">{t('library.checking')}</span>
   if (at.progress === null) return <span className="library-line is-quiet">{t('library.checking')}</span>
 

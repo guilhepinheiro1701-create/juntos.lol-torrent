@@ -670,8 +670,11 @@ function KeepButton({ roomId, fileName, nowPlaying, t }: {
     const look = async () => {
       const at = await jobProgress(jobId)
       if (disposed) return
-      setDone(at?.progress ?? null)
-      if (!at || at.progress === null || at.progress < 1) {
+      // 'gone' aqui nao pede nada: quem esta na sala esta assistindo, e a
+      // retomada mora na aba Baixados, onde a fila vive.
+      const visto = at === 'gone' ? null : at
+      setDone(visto?.progress ?? null)
+      if (!visto || visto.progress === null || visto.progress < 1) {
         timer = setTimeout(() => { void look() }, 3000)
       }
     }

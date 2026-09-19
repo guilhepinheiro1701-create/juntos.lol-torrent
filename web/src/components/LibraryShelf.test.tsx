@@ -6,6 +6,7 @@ import { ToastProvider } from '../ui/Toast'
 import { openTorrent } from '../torrent'
 import { createRoomAndUploadTorrent } from '../upload'
 import { jobProgress, keepTorrent } from '../remoteTorrent'
+import { resumeInterrupted } from '../queue'
 
 vi.mock('../torrent', () => ({ openTorrent: vi.fn() }))
 vi.mock('../upload', () => ({ createRoomAndUploadTorrent: vi.fn() }))
@@ -14,6 +15,7 @@ vi.mock('../remoteTorrent', () => ({
   jobProgress: vi.fn().mockResolvedValue(null),
   storagePlaces: vi.fn().mockResolvedValue([]),
 }))
+vi.mock('../queue', () => ({ resumeInterrupted: vi.fn().mockResolvedValue([]) }))
 
 const t = ((key: string) => key) as Translator
 
@@ -210,5 +212,52 @@ describe('a fila e o que ja esta pronto', () => {
 
     await screen.findByText('library.checking')
     expect(screen.queryByText('library.queue')).not.toBeInTheDocument()
+  })
+})
+
+// O pc desliga, ou o docker fecha. Os bytes continuam no disco, mas o trabalho
+// que sabia do download morreu junto — e ate agora nada mandava continuar.
+describe('retomar um download interrompido', () => {
+  const GB = 1_073_741_824
+
+  beforeEach(() => {
+    vi.mocked(resumeInterrupted).mockResolvedValue([])
+  })
+
+  it('chama a retomada quando o trabalho sumiu, e mostra que está retomando', async () => {
+    localStorage.setItem('ss.library', JSON.stringify([entry({ have: 8 * GB, total: 10 * GB })]))
+    vi.mocked(jobProgress).mockResolvedValue('gone')
+    vi.mocked(resumeInterrupted).mockImplementation(async (deps) => {
+      deps?.onStart?.(entry() as never)
+      return []
+    })
+    shelf()
+
+    expect(await screen.findByText('library.resuming')).toBeInTheDocument()
+  })
+
+  // "Não consegui perguntar" é diferente de "o trabalho não existe": nem sequer
+  // vale a pena acordar a retomada.
+  it('não chama a retomada quando a pergunta apenas falhou', async () => {
+    localStorage.setItem('ss.library', JSON.stringify([entry({ have: 8 * GB, total: 10 * GB })]))
+    vi.mocked(jobProgress).mockResolvedValue(null)
+    shelf()
+
+    await screen.findByText('library.checking')
+    expect(resumeInterrupted).not.toHaveBeenCalled()
+  })
+
+  it('anota o progresso, para saber depois o que ficou pela metade', async () => {
+    localStorage.setItem('ss.library', JSON.stringify([entry()]))
+    vi.mocked(jobProgress).mockResolvedValue({
+      kept: 'kept', progress: 0.5, haveBytes: 5 * GB, totalBytes: 10 * GB, downSpeed: 0, state: 'running',
+    })
+    shelf()
+
+    await waitFor(() => {
+      const guardado = JSON.parse(localStorage.getItem('ss.library') ?? '[]') as { have: number; total: number }[]
+      expect(guardado[0].have).toBe(5 * GB)
+      expect(guardado[0].total).toBe(10 * GB)
+    })
   })
 })

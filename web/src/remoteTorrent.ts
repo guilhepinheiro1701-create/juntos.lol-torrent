@@ -57,6 +57,14 @@ export class UnknownStorageError extends Error {
   }
 }
 
+/** O servidor nao conhece mais este trabalho. */
+export class JobGoneError extends Error {
+  constructor() {
+    super('job not found')
+    this.name = 'JobGoneError'
+  }
+}
+
 /** The session's own budget is spent for now. */
 export class TorrentQuotaError extends Error {
   readonly reason: string
@@ -139,6 +147,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 function classify(status: number, code: string, reason: string): Error {
+  if (code === 'job_not_found') return new JobGoneError()
   if (code === 'unknown_storage') return new UnknownStorageError()
   if (code === 'no_workers') return new NoWorkersError()
   if (code === 'workers_busy' || code === 'worker_gone') return new WorkersBusyError()
@@ -193,7 +202,14 @@ export interface JobProgress {
   state: string
 }
 
-export async function jobProgress(jobId: string): Promise<JobProgress | null> {
+/**
+ * `gone` e o trabalho que o servidor nao conhece mais — o worker reiniciou, ou
+ * a sessao expirou. E diferente de `null`, que e "nao consegui perguntar": um
+ * pede para recomecar, o outro pede para tentar de novo depois.
+ */
+export type JobLook = JobProgress | 'gone' | null
+
+export async function jobProgress(jobId: string): Promise<JobLook> {
   try {
     const job = await api<JobStatus & { keep?: boolean }>(`/${encodeURIComponent(jobId)}?only=swarm`)
     const have = job.swarm?.haveBytes ?? 0
@@ -206,8 +222,8 @@ export async function jobProgress(jobId: string): Promise<JobProgress | null> {
       downSpeed: job.swarm?.downSpeed ?? 0,
       state: job.state,
     }
-  } catch {
-    return null
+  } catch (error) {
+    return error instanceof JobGoneError ? 'gone' : null
   }
 }
 
