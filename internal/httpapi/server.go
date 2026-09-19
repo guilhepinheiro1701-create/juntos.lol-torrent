@@ -140,12 +140,23 @@ func registerFrontend(r *gin.Engine, webDir string) {
 		r.StaticFile("/"+entry.Name(), filepath.Join(webDir, entry.Name()))
 	}
 	r.NoRoute(func(c *gin.Context) {
-		if c.Request.Method != http.MethodGet || strings.HasPrefix(c.Request.URL.Path, "/api/") ||
-			strings.HasPrefix(c.Request.URL.Path, "/media/") || strings.HasPrefix(c.Request.URL.Path, "/ws/") ||
-			strings.HasPrefix(c.Request.URL.Path, "/docs/") {
+		path := c.Request.URL.Path
+		// gin hands a missing static file to NoRoute, so without /assets here a
+		// stylesheet that is not on disk comes back as the page itself, and the
+		// browser reports a MIME type error instead of a plain 404. That is the
+		// least useful sentence it could say about a missing file.
+		if c.Request.Method != http.MethodGet || strings.HasPrefix(path, "/api/") ||
+			strings.HasPrefix(path, "/assets/") || strings.HasPrefix(path, "/media/") ||
+			strings.HasPrefix(path, objectstore.UploadPath+"/") ||
+			strings.HasPrefix(path, "/ws/") || strings.HasPrefix(path, "/docs/") {
 			c.Status(http.StatusNotFound)
 			return
 		}
+		// The page names its assets by content hash, so it must never be the
+		// stale half of the pair: a cached index.html asking for files that a
+		// rebuild has since replaced is exactly how a working install starts
+		// reporting broken stylesheets.
+		c.Header("Cache-Control", "no-store")
 		c.File(filepath.Join(webDir, "index.html"))
 	})
 }

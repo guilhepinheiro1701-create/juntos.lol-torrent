@@ -43,6 +43,13 @@ services:
       MEDIA_DIR: /media
 
       PUBLIC_ORIGIN: http://localhost:8099
+
+      # Por onde o WORKER fala com este servidor. Tem de ser o nome do serviço
+      # na rede do compose: sem isto, o valor cai em PUBLIC_ORIGIN, e o worker
+      # sai procurando "localhost:8099" dentro do próprio container — onde não
+      # há ninguém. O remux baixava o filme inteiro e nunca conseguia enviar um
+      # segmento sequer, e a tela ficava em "Aguardando o início do envio".
+      REMOTE_REMUX_API_BASE: http://app:8080
       ROOM_TTL_HOURS: ${ROOM_TTL_HOURS:-5}
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-51200}
 
@@ -92,9 +99,12 @@ services:
       # recebe, então limitar a subida limita a descida junto. Ponha um número
       # se a sua internet engasga com a subida cheia.
       SS_WORKER_UPLOAD_MBIT: ${WORKER_UPLOAD_MBIT:-0}
-      # Pede ao roteador para abrir a porta 4240 sozinho. 0 desliga, para quem
-      # já abriu na mão ou não quer que o programa fale com o roteador.
-      SS_WORKER_UPNP: ${WORKER_UPNP:-1}
+      # Desligado aqui, e não é preferência: de dentro de um container o UPnP
+      # fala com o gateway do Docker, não com o seu roteador, então o pedido
+      # nunca chega a quem poderia abrir a porta. Eu liguei isto por engano na
+      # etapa anterior. A porta 4240 continua precisando ser aberta à mão no
+      # roteador. Vale 1 para quem roda o worker direto na máquina, sem Docker.
+      SS_WORKER_UPNP: ${WORKER_UPNP:-0}
       SS_WORKER_RELAY_UPSTREAM: http://app:8080
       # Mais de um disco? Veja WORKER_STORAGE_DIRS no .env.local. Cada caminho
       # aqui é de dentro do container, então precisa vir montado em `volumes`.

@@ -64,6 +64,24 @@ function phaseKey(preparation: RoomPreparation): string {
   }
 }
 
+/**
+ * O quanto do torrent já chegou, e em quanto tempo o resto chega.
+ *
+ * O tamanho total não vem nas estatísticas do enxame, mas sai da divisão: o
+ * que já foi baixado sobre a fração que isso representa. Com a fração ainda
+ * em zero não há conta a fazer, e não há o que mostrar.
+ */
+function swarmProgress(swarm: TorrentStats | null | undefined): { pct: number; eta: number | null } | null {
+  if (!swarm || swarm.progress <= 0 || swarm.downloaded <= 0) return null
+  const pct = Math.min(100, Math.round(swarm.progress * 100))
+  const total = swarm.downloaded / swarm.progress
+  const remaining = Math.max(0, total - swarm.downloaded)
+  const eta = swarm.downloadSpeed >= MIN_USEFUL_BYTES_PER_SECOND && remaining > 0
+    ? remaining / swarm.downloadSpeed
+    : null
+  return { pct, eta }
+}
+
 export function UploadAvailability({
   progress,
   preparation,
@@ -91,18 +109,31 @@ export function UploadAvailability({
   const eta = rate >= MIN_USEFUL_BYTES_PER_SECOND && remaining > 0 ? remaining / rate : null
 
   const started = received > 0 || total > 0
-  const label = !started
-    ? t('room.waitingInitial')
-    : barPct >= 100 && prep.previewPhase !== 'unavailable'
-      ? t('prep.phaseSegmenting')
-      : t(phaseKey(prep))
-  const etaLabel = eta !== null ? formatDuration(eta, t) : barPct >= 100 ? t('prep.etaAlmost') : t('prep.etaUnknown')
+
+  // Antes de o preparo receber o primeiro byte, quem está andando é o torrent.
+  // A barra ficava parada em zero e o tempo dizia "calculando…" enquanto o
+  // filme baixava a três megabytes por segundo logo abaixo, no mesmo cartão.
+  const fetch = swarmProgress(swarm)
+  const usingSwarm = !started && fetch !== null
+
+  const label = usingSwarm
+    ? t('prep.phaseFetching')
+    : !started
+      ? t('room.waitingInitial')
+      : barPct >= 100 && prep.previewPhase !== 'unavailable'
+        ? t('prep.phaseSegmenting')
+        : t(phaseKey(prep))
+
+  const shownEta = usingSwarm ? fetch.eta : eta
+  const etaLabel = shownEta !== null
+    ? formatDuration(shownEta, t)
+    : (usingSwarm ? fetch.pct : barPct) >= 100 ? t('prep.etaAlmost') : t('prep.etaUnknown')
 
   const buffering = wait !== null && wait !== undefined
   const bufferLeft = buffering && !wait.cold ? wait.secondsLeft : null
   const bufferPct = bufferLeft === null ? 0 : Math.max(0, Math.min(100, Math.round((1 - bufferLeft / GATE_OPEN_SEC) * 100)))
   const stageKey = !buffering ? label : wait.cold ? 'cold' : 'buffer'
-  const shownPct = buffering ? bufferPct : barPct
+  const shownPct = buffering ? bufferPct : usingSwarm ? fetch.pct : barPct
 
   return (
     <div className="availability-card">
@@ -126,7 +157,10 @@ export function UploadAvailability({
           <span style={shownPct > 0 ? { width: `${shownPct}%` } : undefined} />
         </div>
         <div className="prep-eta">
-          <span>{buffering || (target.bytes > 0 && !target.certain) ? t('prep.untilPlayable') : t('prep.untilComplete')}</span>
+          <span>
+            {buffering || (target.bytes > 0 && !target.certain) ? t('prep.untilPlayable') : t('prep.untilComplete')}
+            {shownPct > 0 ? <em className="prep-pct"><NumberFlow animated={numbersAnimate} value={shownPct} suffix="%" /></em> : null}
+          </span>
           {buffering
             ? <strong>{bufferLeft !== null ? <NumberFlow animated={numbersAnimate} value={bufferLeft} suffix={t('room.bufferingTail')} /> : t('prep.etaUnknown')}</strong>
             : <strong>{etaLabel}</strong>}

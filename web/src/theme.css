@@ -1058,6 +1058,14 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .storage-picker .storage-more { margin: 12px 0 0; font-size: 12px; line-height: 1.5; color: var(--text-dim); opacity: .8; }
 /* Dentro do dialogo de comecar, a caixa nao precisa da borda: o dialogo ja e uma. */
 .ui-dialog .storage-picker { margin: 4px 0 14px; padding: 0; border: 0; background: none; }
+.prep-eta .prep-pct { margin-left: 8px; font-style: normal; font-variant-numeric: tabular-nums; color: var(--text); }
+.start-modes { display: grid; gap: 10px; margin: 0 0 16px; }
+.start-mode { display: grid; grid-template-columns: 20px 1fr; grid-template-rows: auto auto; gap: 2px 12px; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--r-surface); background: rgba(255,255,255,.03); text-align: left; }
+.start-mode:hover { border-color: rgba(255,122,69,.45); background: var(--card-hover); }
+.start-mode svg { grid-row: 1 / span 2; align-self: center; color: #FFB794; }
+.start-mode-title { font-size: 14px; font-weight: 500; color: var(--text); letter-spacing: -.01em; }
+.start-mode-guide { font-size: 12px; line-height: 1.45; color: var(--text-dim); }
+@media (max-width: 480px) { .start-mode { padding: 12px 13px; } }
 .storage-free { color: var(--text-faint); font-size: 12px; font-variant-numeric: tabular-nums; }
 
 /* Sem internet: o catálogo não tem o que mostrar, os baixados têm. */

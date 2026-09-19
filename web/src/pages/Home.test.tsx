@@ -4,9 +4,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Home, MAX_UPLOAD_BYTES } from './Home'
 import { createRoomAndUpload, createRoomAndUploadTorrent } from '../upload'
 import { openTorrent } from '../torrent'
+import { keepTorrent } from '../remoteTorrent'
 
 vi.mock('../upload', () => ({ createRoomAndUpload: vi.fn(), createRoomAndUploadTorrent: vi.fn() }))
 vi.mock('../torrent', () => ({ openTorrent: vi.fn() }))
+// Parcial: o StoragePicker tambem vem daqui, e so a decisao de guardar
+// precisa ser observada.
+vi.mock('../remoteTorrent', async (original) => ({
+  ...(await original() as object),
+  keepTorrent: vi.fn().mockResolvedValue(undefined),
+  storagePlaces: vi.fn().mockResolvedValue([]),
+}))
 vi.mock('../catalog/tmdb', () => ({
   fetchCatalog: vi.fn().mockResolvedValue([]),
   searchCatalog: vi.fn().mockResolvedValue([]),
@@ -158,7 +166,7 @@ describe('Home', () => {
     expect(screen.getByRole('button', { name: /episode-02\.mkv/i })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /episode-02\.mkv/i }))
     await screen.findByRole('heading', { name: /ready to start|pronto para começar/i })
-    fireEvent.click(screen.getByRole('button', { name: /^start$|^começar$/i }))
+    fireEvent.click(screen.getByRole('button', { name: /watch now|assistir agora/i }))
 
     await waitFor(() => expect(createRoomAndUploadTorrent).toHaveBeenCalledOnce())
     expect(createRoomAndUploadTorrent).toHaveBeenCalledWith(
@@ -167,6 +175,45 @@ describe('Home', () => {
       expect.any(Function),
     )
     expect(destroy).not.toHaveBeenCalled()
+    // Assistir agora e o modo passageiro: nada e marcado para ficar.
+    expect(keepTorrent).not.toHaveBeenCalled()
+  })
+
+  // Decidir "quero isto offline" so no meio da exibicao e decidir depois de ja
+  // ter gasto a banda. Os dois modos ficam na mesma tela, antes de comecar.
+  it('offers watching now and keeping the whole film, and marks the job when asked to keep', async () => {
+    const only = { name: 'movie.mkv', path: 'movie.mkv', index: 0, size: 2_000, type: 'video/x-matroska', progress: 0, downloaded: 0, read: vi.fn() }
+    vi.mocked(openTorrent).mockResolvedValue({
+      name: 'A film', jobId: 'job-77', files: [only], subtitleFiles: [],
+      stats: () => ({ peers: 2, downloadSpeed: 100, downloaded: 0, progress: 0 }),
+      select: vi.fn().mockResolvedValue(undefined), destroy: vi.fn(),
+    })
+
+    render(<MemoryRouter><Home /></MemoryRouter>)
+    await openManual(/open torrent|abrir torrent/i)
+    fireEvent.change(await screen.findByLabelText(/magnet link/i), { target: { value: 'magnet:?xt=urn:btih:test' } })
+    fireEvent.click(screen.getByRole('button', { name: /find files|buscar arquivos/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /movie\.mkv/i }))
+    await screen.findByRole('heading', { name: /ready to start|pronto para começar/i })
+
+    expect(screen.getByRole('button', { name: /watch now|assistir agora/i })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /whole film|filme inteiro/i }))
+
+    await waitFor(() => expect(keepTorrent).toHaveBeenCalledWith('job-77', true))
+    await waitFor(() => expect(createRoomAndUploadTorrent).toHaveBeenCalledOnce())
+  })
+
+  // Um arquivo que ja e seu nao tem torrent para guardar, entao a pergunta nao
+  // aparece e a tela volta a ter um botao so.
+  it('does not offer the two modes for a file that is already yours', async () => {
+    render(<MemoryRouter><Home /></MemoryRouter>)
+    await openFilePanel()
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [new File(['video'], 'movie.mkv', { type: 'video/x-matroska' })] } })
+
+    await screen.findByRole('heading', { name: /ready to start|pronto para começar/i })
+    expect(screen.queryByRole('button', { name: /whole film|filme inteiro/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^start$|^começar$/i })).toBeInTheDocument()
   })
 })
 

@@ -133,3 +133,51 @@ describe('UploadAvailability', () => {
     })
   })
 })
+
+// O preparo só recebe o primeiro byte depois de o torrent ter juntado o
+// bastante. Até lá a barra ficava parada em zero e o tempo dizia "calculando",
+// enquanto o filme baixava a megabytes por segundo no mesmo cartão.
+describe('while the torrent is still fetching', () => {
+  const swarm = (over: Partial<{ peers: number; downloadSpeed: number; downloaded: number; progress: number }>) => ({
+    peers: 2, downloadSpeed: 4 * MB, downloaded: 200 * MB, progress: 0.2, ...over,
+  })
+
+  it('shows how much of the torrent has arrived, and when the rest does', () => {
+    render(<UploadAvailability t={t} progress={null} swarm={swarm({})} />)
+
+    expect(screen.getByText('Downloading the film…')).toBeInTheDocument()
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '20')
+    expect(screen.getByText('20%')).toBeInTheDocument()
+    // 1000 MB no total, 200 já vieram: 800 a 4 MB/s é pouco mais de 3 min.
+    expect(screen.getByText('~3 min')).toBeInTheDocument()
+  })
+
+  it('says nothing about time while the speed is not worth extrapolating from', () => {
+    render(<UploadAvailability t={t} progress={null} swarm={swarm({ downloadSpeed: 0 })} />)
+
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '20')
+    expect(screen.getByText('estimating…')).toBeInTheDocument()
+  })
+
+  it('waits quietly when the swarm has not moved at all', () => {
+    render(<UploadAvailability t={t} progress={null} swarm={swarm({ downloaded: 0, progress: 0 })} />)
+
+    expect(screen.getByText('Waiting for the initial upload...')).toBeInTheDocument()
+  })
+
+  // Assim que o preparo anda, é ele que manda: é o que separa "o filme chegou"
+  // de "dá para apertar o play".
+  it('hands the bar over to the preparation as soon as it starts', () => {
+    render(
+      <UploadAvailability
+        t={t}
+        progress={null}
+        preparation={{ sourceBytes: 1000 * MB, receivedBytes: 500 * MB, previewPhase: 'segmenting' }}
+        swarm={swarm({})}
+      />,
+    )
+
+    expect(screen.queryByText('Downloading the film…')).not.toBeInTheDocument()
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50')
+  })
+})

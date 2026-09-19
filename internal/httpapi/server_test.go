@@ -32,6 +32,10 @@ func TestServerServesFrontendRoutesWithoutMaskingAPIs(t *testing.T) {
 		{path: "/oembed.json", statusCode: http.StatusOK, body: `{"type":"link"}`},
 		{path: "/matroska-subtitles.min.js", statusCode: http.StatusOK, body: "parser"},
 		{path: "/api/missing", statusCode: http.StatusNotFound},
+		// A stylesheet that is not on disk has to say so. Served as the page
+		// instead, the browser only reports a MIME type error, which says
+		// nothing about the file being gone.
+		{path: "/assets/index-abc123.css", statusCode: http.StatusNotFound},
 		{path: "/media/missing", statusCode: http.StatusNotFound},
 		{path: "/ws/missing", statusCode: http.StatusNotFound},
 	} {
@@ -95,4 +99,22 @@ func TestPluginWorkerIsServedWithItsOwnPolicy(t *testing.T) {
 	rec = httptest.NewRecorder()
 	server.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/assets/app-abc.js", nil))
 	require.Empty(t, rec.Header().Get("Content-Security-Policy"))
+}
+
+// The page names its assets by content hash. A browser holding a cached
+// index.html after a rebuild asks for files that no longer exist, which is how
+// a working install starts reporting broken stylesheets.
+func TestIndexIsNeverCached(t *testing.T) {
+	webDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(webDir, "index.html"), []byte("<main>ss</main>"), 0o644))
+
+	cfg := testCfg(t)
+	cfg.WebDir = webDir
+	server := NewServer(cfg, newTestStore(t))
+
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/room/abc", nil))
+
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Equal(t, "no-store", response.Header().Get("Cache-Control"))
 }

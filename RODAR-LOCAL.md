@@ -89,7 +89,7 @@ fabricante. O setup abre a página e para.
 
 Tudo publica em `127.0.0.1` de propósito. **Não exponha isto na internet:** não há TLS, e o worker roda em HTTP puro.
 
-A porta **4240** (TCP e UDP) é a única que o roteador precisa deixar entrar, e só para o torrent achar peers. O worker tenta abri-la sozinho por UPnP; se o seu roteador não aceitar, abra à mão, ou o download fica lento.
+A porta **4240** (TCP e UDP) é a única que o roteador precisa deixar entrar, e só para o torrent achar peers. **Abra à mão no roteador:** de dentro de um container, o pedido automático (UPnP) fala com o Docker, não com o seu roteador, então não adianta.
 
 ## Escolher em que disco os filmes ficam
 
@@ -154,8 +154,7 @@ variável de ambiente, apague o `.env.local` e rode o `setup` de novo.
    (`WORKER_UPLOAD_MBIT=0`). Se a sua internet engasga com a subida cheia,
    ponha um número ali — mas saiba que isso baixa a descida junto.
 2. **A porta 4240.** Sem ela só há conexões de saída, e metade do enxame fica
-   fora de alcance. O worker pede ao roteador por UPnP; `WORKER_UPNP=0`
-   desliga esse pedido.
+   fora de alcance. Abra no roteador, apontando para esta máquina, TCP e UDP.
 3. **O torrent.** Alguns simplesmente não têm seeds. A aba **Status** mostra
    quantos peers o worker achou.
 

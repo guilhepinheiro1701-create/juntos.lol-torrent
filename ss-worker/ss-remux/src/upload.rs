@@ -60,7 +60,7 @@ impl Uploader {
                 let Some(target) = signed.iter().find(|s| s.name == object.name) else {
                     bail!("presign missing {}", object.name);
                 };
-                let url = target.url.clone();
+                let url = self.absolute(&target.url)?;
                 let headers = target.headers.clone();
                 let local = local.clone();
                 let global = self.global_puts.clone();
@@ -86,6 +86,23 @@ impl Uploader {
             done.context("upload task")??;
         }
         Ok(())
+    }
+
+    /// Uma assinatura pode vir com o endereço inteiro, quando os objetos moram
+    /// noutro servidor, ou com um caminho só, quando quem os guarda é o próprio
+    /// servidor que assinou. O navegador resolve um caminho contra a página em
+    /// que está; o worker não está em página nenhuma, então resolve contra o
+    /// mesmo servidor a que acabou de pedir a assinatura.
+    fn absolute(&self, url: &str) -> anyhow::Result<String> {
+        if url.starts_with("http://") || url.starts_with("https://") {
+            return Ok(url.to_string());
+        }
+        let base = reqwest::Url::parse(&self.api_base)
+            .with_context(|| format!("api base `{}` is not a url", self.api_base))?;
+        Ok(base
+            .join(url)
+            .with_context(|| format!("cannot resolve `{url}` against `{}`", self.api_base))?
+            .to_string())
     }
 
     async fn presign(&self, batch: &[ClosedObject]) -> anyhow::Result<Vec<PresignedObject>> {
@@ -135,4 +152,54 @@ async fn put_with_retry(
         tokio::time::sleep(Duration::from_millis(400 << attempt.min(5))).await;
     }
     Err(last.unwrap_or_else(|| anyhow::anyhow!("PUT failed")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn uploader(api_base: &str) -> Uploader {
+        let (uploaded_tx, _rx) = mpsc::unbounded_channel();
+        Uploader {
+            client: reqwest::Client::new(),
+            api_base: api_base.to_string(),
+            room_id: "ROOM1234".into(),
+            claim: "client:test".into(),
+            job_puts: 1,
+            global_puts: Arc::new(Semaphore::new(1)),
+            uploaded_tx,
+        }
+    }
+
+    // Quando o próprio servidor guarda os objetos, ele assina um caminho, não
+    // um endereço: o navegador resolve isso contra a página em que está, e o
+    // worker não está em página nenhuma. Sem isto, todo PUT falhava e o filme
+    // baixava inteiro sem nunca começar a tocar.
+    #[test]
+    fn a_path_is_resolved_against_the_server_that_signed_it() {
+        let up = uploader("http://app:8080");
+        assert_eq!(
+            up.absolute("/media-objects/rooms/ROOM1234/g0/hls/cs_0_1.m4s?exp=1&sig=ab")
+                .unwrap(),
+            "http://app:8080/media-objects/rooms/ROOM1234/g0/hls/cs_0_1.m4s?exp=1&sig=ab"
+        );
+    }
+
+    #[test]
+    fn an_address_somewhere_else_is_left_alone() {
+        let up = uploader("http://app:8080");
+        for url in [
+            "https://bucket.example.test/rooms/a/cs_0_1.m4s?X-Amz-Signature=deadbeef",
+            "http://juntos-minio:9000/juntos/rooms/a/cs_0_1.m4s",
+        ] {
+            assert_eq!(up.absolute(url).unwrap(), url);
+        }
+    }
+
+    #[test]
+    fn an_api_base_that_is_not_a_url_says_so_instead_of_guessing() {
+        let up = uploader("app:8080");
+        let err = up.absolute("/media-objects/x.m4s").unwrap_err().to_string();
+        assert!(err.contains("app:8080"), "{err}");
+    }
 }

@@ -1,7 +1,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'react'
 import { AnimatePresence, motion, useReducedMotion, LayoutGroup } from 'motion/react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import { FolderOpen, Puzzle, Upload } from 'lucide-react'
+import { Download, FolderOpen, Play, Puzzle, Upload } from 'lucide-react'
 import { YoutubeGlyph } from '../ui/YoutubeGlyph'
 import { useT } from '../i18n/useT'
 import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl, createRoomAndUploadYoutube, isUnreadableFile, youtubeFileName, type UploadProgress } from '../upload'
@@ -25,6 +25,7 @@ import { DrivePicker, drivePlaybackUrls } from '../components/DrivePicker'
 import { Button } from '../ui/Button'
 import { Dialog, DialogContent } from '../ui/Dialog'
 import type { TorrentSession, TorrentVideoFile, WorkerProbe } from '../torrent'
+import { keepTorrent } from '../remoteTorrent'
 import { isTorrentError, torrentErrorKey } from '../torrentErrors'
 import { MorphPanel } from '../ui/MorphPanel'
 import { useMorphingStep } from '../ui/useMorphingStep'
@@ -62,6 +63,18 @@ type PendingMedia =
   | { kind: 'youtube'; session: YoutubeSession }
   | { kind: 'drive'; file: TorrentVideoFile; session: TorrentSession }
   | { kind: 'stream'; pick: TitlePick }
+
+/**
+ * Se ha um torrent por tras, e portanto algo que o worker possa guardar.
+ *
+ * Um arquivo que ja e seu nao precisa ser baixado de novo; um video do YouTube
+ * ou do Drive nao vem de um enxame. Nesses casos a pergunta nao existe, e a
+ * tela volta a ter um botao so.
+ */
+function torrentBacked(media: PendingMedia): boolean {
+  if (media.kind === 'torrent') return true
+  return media.kind === 'stream' && media.pick.stream.location.kind !== 'url'
+}
 
 // Router state must be serializable, so the morph origin travels as numbers.
 interface TitleLocationState {
@@ -183,7 +196,23 @@ export function Home() {
     setPendingMedia({ kind: 'stream', pick })
   }
 
-  const startUpload = async () => {
+  // Um torrent que fica no disco e um que e devolvido depois sao o mesmo
+  // download: o que muda e so se o worker o guarda no fim. Perguntar aqui, e
+  // nao so no meio da exibicao, e o que deixa "assistir offline depois" ser
+  // uma decisao tomada antes de gastar a banda.
+  const keepWhole = async (jobId: string | undefined) => {
+    if (!jobId) return
+    try {
+      await keepTorrent(jobId, true)
+    } catch (error) {
+      // Nao derruba a exibicao: o filme toca do mesmo jeito, e o botao
+      // Baixar continua la dentro para tentar de novo.
+      console.error('keep on start failed', error)
+      toast(t('room.keepFailed'))
+    }
+  }
+
+  const startUpload = async (keep = false) => {
     const media = pendingMedia
     if (!media || starting) return
     setPendingMedia(null)
@@ -200,6 +229,7 @@ export function Home() {
         room = await createRoomAndUpload(media.file, '', setProgress)
         fileName = media.file.name
       } else if (media.kind === 'torrent') {
+        if (keep) await keepWhole(media.session.jobId)
         room = await createRoomAndUploadTorrent({ file: media.file, session: media.session }, '', setProgress)
         fileName = media.file.name
       } else if (media.kind === 'youtube') {
@@ -231,6 +261,7 @@ export function Home() {
         setStreamProbes([])
         const opened = await openCatalogStream(media.pick.stream, media.pick.target, undefined, { onProbe: setStreamProbes })
         setProgress(null)
+        if (keep) await keepWhole(opened.session.jobId)
         try {
           room = await createRoomAndUploadTorrent(opened, '', setProgress)
         } catch (error) {
@@ -512,19 +543,38 @@ export function Home() {
                   : pendingMedia.kind === 'youtube' ? youtubeFileName(pendingMedia.session)
                     : pendingMedia.file.name}
             </span>
-            <form onSubmit={(event) => { event.preventDefault(); void startUpload() }}>
+            <form onSubmit={(event) => { event.preventDefault(); void startUpload(false) }}>
               {/* Onde o filme vai parar, perguntado no unico momento em que a
                   pergunta cabe: depois de escolher o que assistir e antes de
                   baixar qualquer coisa. Antes isto vivia dentro da aba
                   Baixados, que so aparecia depois do primeiro download — ou
                   seja, depois de ja ter sido gravado em algum lugar. */}
               <StoragePicker t={t} />
+              {/* So o que vem de torrent pode ser guardado: um arquivo que ja
+                  e seu, ou um video do YouTube ou do Drive, nao tem o que
+                  manter no disco do worker. */}
+              {torrentBacked(pendingMedia) ? (
+                <div className="start-modes">
+                  <button type="submit" className="start-mode">
+                    <Play size={17} aria-hidden="true" />
+                    <span className="start-mode-title">{t('home.modeWatch')}</span>
+                    <span className="start-mode-guide">{t('home.modeWatchGuide')}</span>
+                  </button>
+                  <button type="button" className="start-mode" onClick={() => { void startUpload(true) }}>
+                    <Download size={17} aria-hidden="true" />
+                    <span className="start-mode-title">{t('home.modeKeep')}</span>
+                    <span className="start-mode-guide">{t('home.modeKeepGuide')}</span>
+                  </button>
+                </div>
+              ) : null}
               <div className="dialog-actions">
                 <Button onClick={() => {
                   discardPending(pendingMedia)
                   setPendingMedia(null)
                 }}>{t('home.cancel')}</Button>
-                <Button type="submit" variant="primary">{t('home.continue')}</Button>
+                {torrentBacked(pendingMedia)
+                  ? null
+                  : <Button type="submit" variant="primary">{t('home.continue')}</Button>}
               </div>
             </form>
           </DialogContent>
