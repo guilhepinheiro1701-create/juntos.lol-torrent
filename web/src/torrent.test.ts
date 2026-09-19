@@ -117,3 +117,52 @@ describe('openTorrent', () => {
     expect(calls.some((call) => call.init?.method === 'DELETE')).toBe(true)
   })
 })
+
+// Quem roda o pasta.bat troca o rotulo do disco, e a preferencia guardada
+// neste navegador continua apontando para o antigo. Sem isto, toda abertura
+// morria em "torrent api unknown_storage" e nada limpava a escolha velha.
+describe('a disk preference that the installation no longer offers', () => {
+  afterEach(() => { vi.unstubAllGlobals(); localStorage.clear() })
+
+  it('drops the stale choice and tries again at the default place', async () => {
+    localStorage.setItem('ss.storage', 'SSD-que-nao-existe-mais')
+    let posts = 0
+    const { fn, calls } = fleetFetch({
+      'GET /api/torrents/workers': () => json({ workers: [] }),
+      'POST /api/torrents': () => {
+        posts += 1
+        if (posts === 1) return json({ error: 'unknown_storage' }, 400)
+        return json({ jobId: 'j1', state: 'resolving' }, 202)
+      },
+      'GET /api/torrents/j1': () => json({
+        jobId: 'j1', state: 'listed', name: 'Show',
+        files: [{ index: 0, name: 'episode.mkv', path: 'show/episode.mkv', size: 6 }],
+        swarm: { peers: 1, downSpeed: 0, haveBytes: 0, selectedBytes: 6 },
+      }),
+    })
+    vi.stubGlobal('fetch', fn)
+
+    await openTorrent(MAGNET)
+
+    expect(posts).toBe(2)
+    expect(localStorage.getItem('ss.storage')).toBeNull()
+    const enviados = calls
+      .filter((c) => c.init?.method === 'POST' && String(c.url).endsWith('/api/torrents'))
+      .map((c) => JSON.parse(String(c.init?.body)) as { storage?: string })
+    expect(enviados[0].storage).toBe('SSD-que-nao-existe-mais')
+    expect(enviados[1].storage).toBeUndefined()
+  })
+
+  // Uma vez so: se o proprio lugar padrao for recusado, insistir seria um ciclo.
+  it('gives up if the default place is refused too', async () => {
+    localStorage.setItem('ss.storage', 'HDD')
+    const { fn } = fleetFetch({
+      'GET /api/torrents/workers': () => json({ workers: [] }),
+      'POST /api/torrents': () => json({ error: 'unknown_storage' }, 400),
+    })
+    vi.stubGlobal('fetch', fn)
+
+    await expect(openTorrent(MAGNET)).rejects.toThrow()
+    expect(localStorage.getItem('ss.storage')).toBeNull()
+  })
+})

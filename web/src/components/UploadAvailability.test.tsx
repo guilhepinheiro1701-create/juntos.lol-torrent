@@ -181,3 +181,59 @@ describe('while the torrent is still fetching', () => {
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50')
   })
 })
+
+// O tamanho do arquivo e conhecido desde o primeiro instante, entao qualquer
+// condicao do tipo "ainda nao comecou" baseada nele ja nasce falsa num
+// torrent. Foi assim que a barra do enxame ficou escrita e nunca rodou.
+describe('with the file size already known and nothing prepared yet', () => {
+  const swarm = (over: Record<string, unknown> = {}) => ({
+    peers: 3, downloadSpeed: 4 * MB, downloaded: 200 * MB, progress: 0.2, ...over,
+  })
+
+  it('still reads the bar and the time from the torrent', () => {
+    render(
+      <UploadAvailability
+        t={t}
+        progress={null}
+        preparation={{ sourceBytes: 1000 * MB, receivedBytes: 0 }}
+        swarm={swarm()}
+      />,
+    )
+
+    expect(screen.getByText('Downloading the film…')).toBeInTheDocument()
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '20')
+    expect(screen.queryByText('estimating…')).not.toBeInTheDocument()
+  })
+
+  // Reabrir um filme que ja esta no disco cria um trabalho novo, e o baixador
+  // so chama de "tem" o pedaco que ja conferiu: a conta fica em zero, a
+  // velocidade tambem, e o filme inteiro esta ali em diskBytes.
+  it('says it is checking the disk instead of estimating forever', () => {
+    render(
+      <UploadAvailability
+        t={t}
+        progress={null}
+        preparation={{ sourceBytes: 1000 * MB, receivedBytes: 0 }}
+        swarm={swarm({ downloadSpeed: 0, downloaded: 10 * MB, progress: 0.01, diskBytes: 1000 * MB })}
+      />,
+    )
+
+    expect(screen.getByText('Checking what is already on disk…')).toBeInTheDocument()
+    expect(screen.getByText('nearly there')).toBeInTheDocument()
+    expect(screen.queryByText('estimating…')).not.toBeInTheDocument()
+  })
+
+  it('does not call it checking while the bytes are genuinely still coming', () => {
+    render(
+      <UploadAvailability
+        t={t}
+        progress={null}
+        preparation={{ sourceBytes: 1000 * MB, receivedBytes: 0 }}
+        swarm={swarm({ downloadSpeed: 0, downloaded: 10 * MB, progress: 0.01, diskBytes: 10 * MB })}
+      />,
+    )
+
+    expect(screen.queryByText('Checking what is already on disk…')).not.toBeInTheDocument()
+    expect(screen.getByText('Downloading the film…')).toBeInTheDocument()
+  })
+})

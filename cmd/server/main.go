@@ -87,7 +87,7 @@ func main() {
 	}
 	registry := worker.NewRegistry(rdb)
 	workerHub := worker.NewHub(registry, signer, cfg.WorkerEnrollmentSecret)
-	quota := httpapi.NewQuota(rdb, cfg.TorrentDispatchPerHour, cfg.TorrentConcurrentJobs, cfg.TorrentBytesPerDayGB<<30)
+	quota := httpapi.NewQuota(rdb, cfg.TorrentDispatchPerHour, cfg.TorrentConcurrentJobs, cfg.TorrentBytesPerDayGB<<30, cfg.PluginFetchPerHour)
 	torrents := &worker.Service{
 		Registry:  registry,
 		Hub:       workerHub,

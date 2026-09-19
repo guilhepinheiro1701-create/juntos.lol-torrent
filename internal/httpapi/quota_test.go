@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -17,7 +18,15 @@ func newQuota(t *testing.T, dispatch, jobs int, bytes int64) (*Quota, *miniredis
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { rdb.Close() })
-	return NewQuota(rdb, dispatch, jobs, bytes), mr
+	return NewQuota(rdb, dispatch, jobs, bytes, 0), mr
+}
+
+func newQuotaWithPluginFetch(t *testing.T, perHour int) (*Quota, *miniredis.Miniredis) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { rdb.Close() })
+	return NewQuota(rdb, 0, 0, 0, perHour), mr
 }
 
 func TestQuotaDispatchBudget(t *testing.T) {
@@ -102,4 +111,31 @@ func TestQuotaProbeBudget(t *testing.T) {
 	ok, err = q.CheckProbes(t.Context(), "s1")
 	require.NoError(t, err)
 	require.True(t, ok, "next hour's key starts over")
+}
+
+// Seiscentos por hora e a conta de um servidor compartilhado. Numa instalacao
+// de um espectador so, o catalogo sozinho gasta isso numa tarde, e o teto
+// vira uma parede sem motivo.
+func TestPluginFetchCeilingIsConfigurable(t *testing.T) {
+	frouxo, _ := newQuotaWithPluginFetch(t, 2000)
+	apertado, _ := newQuotaWithPluginFetch(t, 2)
+
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		ok, err := apertado.CheckPluginFetch(ctx, "s1")
+		require.NoError(t, err)
+		require.Equal(t, i < 2, ok, "pedido %d", i+1)
+	}
+	for i := 0; i < 3; i++ {
+		ok, err := frouxo.CheckPluginFetch(ctx, "s1")
+		require.NoError(t, err)
+		require.True(t, ok, "pedido %d", i+1)
+	}
+}
+
+// Zero nao significa "sem budget": significa "o do codigo", que e o que a
+// instalacao compartilhada quer.
+func TestPluginFetchZeroKeepsTheBuiltInCeiling(t *testing.T) {
+	q, _ := newQuotaWithPluginFetch(t, 0)
+	require.Equal(t, pluginFetchPerHour, q.pluginFetchPerHour)
 }

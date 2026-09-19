@@ -262,7 +262,7 @@ func TestPluginFetchSpendsTheSessionBudget(t *testing.T) {
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { rdb.Close() })
 	sessions := NewSessions(rdb, time.Hour, 0, false)
-	quota := NewQuota(rdb, 0, 0, 0)
+	quota := NewQuota(rdb, 0, 0, 0, 0)
 	quota.pluginFetchPerHour = 2
 
 	fetcher := NewPluginFetcher(config.Config{})

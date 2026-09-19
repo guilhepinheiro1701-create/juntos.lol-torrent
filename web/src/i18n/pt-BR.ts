@@ -125,6 +125,8 @@ export const ptBR: Record<string, string> = {
   'room.waitingInitial': 'Aguardando o início do envio...',
   'prep.phaseReceiving': 'Recebendo o vídeo…',
   'prep.phaseFetching': 'Baixando o filme…',
+  'prep.phaseVerifying': 'Conferindo o que já está no disco…',
+  'prep.etaVerifying': 'quase lá',
   'prep.phaseProbing': 'Analisando o que já chegou…',
   'prep.phaseSegmenting': 'Montando o primeiro trecho…',
   'prep.phaseUnavailable': 'Este arquivo não permite prévia: a reprodução começa quando o download terminar.',

@@ -1,6 +1,6 @@
 import { mockOpenTorrent, mocksEnabled } from './mocks'
-import { openRemoteTorrent, type OpenTorrentOptions } from './remoteTorrent'
-import { storagePreference } from './storagePlace'
+import { openRemoteTorrent, UnknownStorageError, type OpenTorrentOptions } from './remoteTorrent'
+import { setStoragePreference, storagePreference } from './storagePlace'
 
 export { NoWorkersError, TorrentQuotaError, TorrentRejectedError, WorkersBusyError, parseMagnet, probeWorkers } from './remoteTorrent'
 export type { OpenTorrentOptions, WorkerProbe } from './remoteTorrent'
@@ -71,5 +71,15 @@ export async function openTorrent(
   // caller: it is the same answer for all of them, and this is the one door
   // they all go through.
   const storage = options?.storage ?? storagePreference()
-  return await openRemoteTorrent(magnet, onStats, { ...options, ...(storage ? { storage } : {}) })
+  try {
+    return await openRemoteTorrent(magnet, onStats, { ...options, ...(storage ? { storage } : {}) })
+  } catch (error) {
+    // O disco escolhido deixou de existir — alguem rodou o pasta.bat, ou
+    // editou o .env.local. Insistir nele e um beco sem saida: a preferencia
+    // cai, e a tentativa seguinte usa o lugar padrao do worker. Uma vez so,
+    // para nao entrar em ciclo se o padrao tambem for recusado.
+    if (!(error instanceof UnknownStorageError) || !storage) throw error
+    setStoragePreference('')
+    return await openRemoteTorrent(magnet, onStats, { ...options, storage: undefined })
+  }
 }

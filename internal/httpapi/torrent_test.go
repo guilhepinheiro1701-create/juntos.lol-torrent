@@ -37,7 +37,7 @@ func TestTorrentRoutesWithoutWorkers(t *testing.T) {
 	r := gin.New()
 	RegisterTorrentRoutes(r.Group("/api"), config.Config{}, TorrentAccess{
 		Sessions: NewSessions(rdb, 1e9, 0, false),
-		Quota:    NewQuota(rdb, 5, 2, 0),
+		Quota:    NewQuota(rdb, 5, 2, 0, 0),
 		Service:  service,
 	})
 

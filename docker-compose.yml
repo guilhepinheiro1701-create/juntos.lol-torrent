@@ -68,6 +68,14 @@ services:
       WORKER_ENROLLMENT_SECRET: ${WORKER_ENROLLMENT_SECRET:?rode o setup primeiro}
       WORKER_SIGNING_KEY_FILE: /data/worker-signing.key
 
+      # Quantas buscas um navegador pode fazer pelos plugins por hora. O teto
+      # de fábrica (600) é a conta de um servidor compartilhado, onde a
+      # pergunta é quanto um visitante gasta do que é de todos. Aqui o
+      # espectador é um só, e cada título aberto no catálogo dispara até
+      # dezenove buscas entre os provedores — uma tarde de catálogo batia no
+      # limite e as fontes começavam a voltar vazias, com 429 no console.
+      PLUGIN_FETCH_PER_HOUR: ${PLUGIN_FETCH_PER_HOUR:-20000}
+
       # Saída para os plugins de fonte. Deixe vazio; só serve se algum addon
       # recusar o seu IP.
       PLUGIN_FETCH_PROXY: ${PLUGIN_FETCH_PROXY:-}

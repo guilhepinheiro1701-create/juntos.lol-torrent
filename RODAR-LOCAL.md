@@ -194,6 +194,16 @@ variável de ambiente, apague o `.env.local` e rode o `setup` de novo.
 
 **"no workers".** O worker não entrou na frota. Quase sempre é o `WORKER_ENROLLMENT_SECRET` diferente entre o `app` e o `worker` — acontece se o `.env.local` foi editado à mão. Veja `logs -f worker`.
 
+**As fontes voltam vazias e o console mostra 429.** É o teto de buscas por
+hora do próprio site, feito para um servidor compartilhado. Aqui ele já vem
+alto (`PLUGIN_FETCH_PER_HOUR=20000`); se ainda assim bater, suba no
+`.env.local`.
+
+**A tela fica em "Conferindo o que já está no disco…".** É o baixador
+reconferindo pedaço por pedaço um filme que já estava ali — reabrir um download
+cria um trabalho novo, e ele só chama de "tem" o que já verificou. Não está
+baixando de novo; é leitura de disco, e passa.
+
 **O download está lento.** Três coisas mandam nisso, nesta ordem:
 
 1. **A subida.** No BitTorrent quem não envia não recebe: os outros clientes

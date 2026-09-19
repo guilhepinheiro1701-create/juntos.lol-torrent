@@ -48,7 +48,8 @@ type Config struct {
 
 	RemoteRemuxAPIBase string
 
-	PluginFetchProxy string
+	PluginFetchProxy   string
+	PluginFetchPerHour int
 }
 
 func Load() (Config, error) {
@@ -140,6 +141,9 @@ func Load() (Config, error) {
 	cfg.BehindCloudflare = os.Getenv("TRUSTED_EDGE") == "cloudflare"
 	cfg.WorkerRelayBase = strings.TrimSuffix(os.Getenv("WORKER_RELAY_BASE"), "/")
 	cfg.RemoteRemuxAPIBase = strings.TrimSuffix(os.Getenv("REMOTE_REMUX_API_BASE"), "/")
+	if cfg.PluginFetchPerHour, err = envInt("PLUGIN_FETCH_PER_HOUR", 0); err != nil {
+		return Config{}, err
+	}
 	cfg.PluginFetchProxy = strings.TrimSpace(os.Getenv("PLUGIN_FETCH_PROXY"))
 	if cfg.PluginFetchProxy != "" {
 		u, err := url.Parse(cfg.PluginFetchProxy)

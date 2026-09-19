@@ -125,6 +125,8 @@ export const en: Record<string, string> = {
   'room.waitingInitial': 'Waiting for the initial upload...',
   'prep.phaseReceiving': 'Receiving the video…',
   'prep.phaseFetching': 'Downloading the film…',
+  'prep.phaseVerifying': 'Checking what is already on disk…',
+  'prep.etaVerifying': 'nearly there',
   'prep.phaseProbing': 'Analysing what has arrived…',
   'prep.phaseSegmenting': 'Building the first segment…',
   'prep.phaseUnavailable': 'This file cannot be previewed: playback starts once the download finishes.',

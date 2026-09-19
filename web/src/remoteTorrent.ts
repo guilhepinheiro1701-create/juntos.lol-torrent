@@ -42,6 +42,21 @@ export class TorrentRejectedError extends Error {
   }
 }
 
+/**
+ * O disco pedido nao e um dos que esta instalacao oferece.
+ *
+ * Acontece sozinho: quem roda o pasta.bat troca o rotulo do disco, e a
+ * preferencia guardada neste navegador continua apontando para o antigo. Sem
+ * um tipo proprio isso virava "torrent api unknown_storage" no console e um
+ * "nao pode ser abrir aqui" na tela, sem saida.
+ */
+export class UnknownStorageError extends Error {
+  constructor() {
+    super('unknown storage')
+    this.name = 'UnknownStorageError'
+  }
+}
+
 /** The session's own budget is spent for now. */
 export class TorrentQuotaError extends Error {
   readonly reason: string
@@ -124,6 +139,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 function classify(status: number, code: string, reason: string): Error {
+  if (code === 'unknown_storage') return new UnknownStorageError()
   if (code === 'no_workers') return new NoWorkersError()
   if (code === 'workers_busy' || code === 'worker_gone') return new WorkersBusyError()
   if (status === 429) return new TorrentQuotaError(reason || code || 'rate_limited')

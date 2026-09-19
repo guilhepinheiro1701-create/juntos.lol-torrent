@@ -22,10 +22,15 @@ type Quota struct {
 	pluginFetchPerHour int
 }
 
-// NewQuota returns a Quota; a zero limit disables that budget.
-func NewQuota(rdb *redis.Client, dispatchPerHour, concurrentJobs int, bytesPerDay int64) *Quota {
+// NewQuota returns a Quota; a zero limit disables that budget. A zero
+// pluginFetchPerHour keeps the built-in ceiling, which is what the shared
+// install wants; an install with one viewer can raise it.
+func NewQuota(rdb *redis.Client, dispatchPerHour, concurrentJobs int, bytesPerDay int64, pluginFetch int) *Quota {
+	if pluginFetch <= 0 {
+		pluginFetch = pluginFetchPerHour
+	}
 	return &Quota{rdb: rdb, dispatchPerHour: dispatchPerHour, concurrentJobs: concurrentJobs, bytesPerDay: bytesPerDay,
-		pluginFetchPerHour: pluginFetchPerHour}
+		pluginFetchPerHour: pluginFetch}
 }
 
 func dispatchKey(sid string) string {
@@ -105,6 +110,11 @@ func (q *Quota) CheckProbes(ctx context.Context, sid string) (bool, error) {
 	return n <= probeListPerHour, nil
 }
 
+// Seiscentos por sessao e a conta de um servidor compartilhado, onde a
+// pergunta e quanto um visitante pode gastar do que e de todos. Numa
+// instalacao de um espectador so nao ha de quem tomar, e o catalogo gasta
+// depressa: cada titulo aberto dispara ate dezenove buscas entre os
+// provedores. PLUGIN_FETCH_PER_HOUR levanta o teto.
 const pluginFetchPerHour = 600
 
 func pluginFetchKey(sid string) string {

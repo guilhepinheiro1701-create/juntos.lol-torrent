@@ -71,15 +71,27 @@ function phaseKey(preparation: RoomPreparation): string {
  * que já foi baixado sobre a fração que isso representa. Com a fração ainda
  * em zero não há conta a fazer, e não há o que mostrar.
  */
-function swarmProgress(swarm: TorrentStats | null | undefined): { pct: number; eta: number | null } | null {
-  if (!swarm || swarm.progress <= 0 || swarm.downloaded <= 0) return null
+function swarmProgress(swarm: TorrentStats | null | undefined): { pct: number; eta: number | null; verifying: boolean } | null {
+  if (!swarm) return null
+
+  const total = swarm.progress > 0 ? swarm.downloaded / swarm.progress : 0
+
+  // Reabrir um filme que já está no disco cria um trabalho novo, e o baixador
+  // recomeça do zero na contagem: ele só chama de "tem" o pedaço que já
+  // conferiu. Nessa hora o que existe de verdade está em `diskBytes`, a
+  // velocidade é zero porque não há nada a baixar, e um "calculando…" eterno
+  // seria a pior leitura possível de um filme que já está inteiro ali.
+  const onDisk = swarm.diskBytes ?? 0
+  const verifying = total > 0 && swarm.downloadSpeed === 0 && onDisk >= total * 0.98 && swarm.downloaded < total * 0.98
+  if (verifying) return { pct: Math.min(100, Math.round(swarm.progress * 100)), eta: null, verifying: true }
+
+  if (swarm.progress <= 0 || swarm.downloaded <= 0) return null
   const pct = Math.min(100, Math.round(swarm.progress * 100))
-  const total = swarm.downloaded / swarm.progress
   const remaining = Math.max(0, total - swarm.downloaded)
   const eta = swarm.downloadSpeed >= MIN_USEFUL_BYTES_PER_SECOND && remaining > 0
     ? remaining / swarm.downloadSpeed
     : null
-  return { pct, eta }
+  return { pct, eta, verifying: false }
 }
 
 export function UploadAvailability({
@@ -110,14 +122,18 @@ export function UploadAvailability({
 
   const started = received > 0 || total > 0
 
-  // Antes de o preparo receber o primeiro byte, quem está andando é o torrent.
-  // A barra ficava parada em zero e o tempo dizia "calculando…" enquanto o
-  // filme baixava a três megabytes por segundo logo abaixo, no mesmo cartão.
+  // Enquanto o preparo não recebeu byte nenhum, quem está andando é o torrent.
+  //
+  // A condição é `received === 0`, e não `!started`: o tamanho do arquivo é
+  // conhecido desde o primeiro instante, então `started` já nasce verdadeiro
+  // num torrent e este trecho nunca rodava. A barra ficava parada em zero e o
+  // tempo dizia "calculando…" enquanto o filme baixava logo abaixo, no mesmo
+  // cartão — que é exatamente o que fazia esperar sem saber até quando.
   const fetch = swarmProgress(swarm)
-  const usingSwarm = !started && fetch !== null
+  const usingSwarm = received === 0 && fetch !== null
 
   const label = usingSwarm
-    ? t('prep.phaseFetching')
+    ? t(fetch.verifying ? 'prep.phaseVerifying' : 'prep.phaseFetching')
     : !started
       ? t('room.waitingInitial')
       : barPct >= 100 && prep.previewPhase !== 'unavailable'
@@ -127,7 +143,8 @@ export function UploadAvailability({
   const shownEta = usingSwarm ? fetch.eta : eta
   const etaLabel = shownEta !== null
     ? formatDuration(shownEta, t)
-    : (usingSwarm ? fetch.pct : barPct) >= 100 ? t('prep.etaAlmost') : t('prep.etaUnknown')
+    : usingSwarm && fetch.verifying ? t('prep.etaVerifying')
+      : (usingSwarm ? fetch.pct : barPct) >= 100 ? t('prep.etaAlmost') : t('prep.etaUnknown')
 
   const buffering = wait !== null && wait !== undefined
   const bufferLeft = buffering && !wait.cold ? wait.secondsLeft : null
