@@ -132,6 +132,9 @@ export function Home() {
   }
 
   const online = useOnline()
+  // `isSecureContext` e falso em http fora de localhost, que e exatamente o
+  // caso de quem abre o site pelo endereco da rede.
+  const insecure = typeof window !== 'undefined' && window.isSecureContext === false
   // Always the four. Hiding downloads until there was something in them read,
   // from the outside, as the feature not existing at all — and a person cannot
   // download a film through a tab they have never been shown.
@@ -340,6 +343,13 @@ export function Home() {
         <div className="morph-step" data-step="menu">
           <h2 className="stage-title">{t('home.title')}</h2>
           <p className="stage-description">{t('home.guide')}</p>
+          {/* Preparar um arquivo seu acontece dentro do navegador, com
+              WebCodecs, e o navegador so oferece WebCodecs em contexto seguro:
+              HTTPS, ou localhost. Aberto pelo endereco da rede — que e como a
+              TV chega aqui — ele nao existe, e o envio falharia sem explicar
+              por que. O catalogo e os torrents nao passam por ali: quem
+              prepara e o worker. */}
+          {insecure ? <p className="stage-note">{t('home.insecureOwnFiles')}</p> : null}
           <div className="source-options">
             <button onClick={() => setManualOpen('file')}>
               <Upload size={18} aria-hidden="true" />{t('home.uploadFile')}

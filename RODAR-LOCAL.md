@@ -110,6 +110,20 @@ então o segundo aparelho não precisa alcançar o baixador — só a porta 8099
 O plugin de fontes **vem junto com o site**, então o navegador da TV acha
 filmes na primeira vez que abre, sem instalar nada.
 
+### O que muda ao abrir pelo endereço da rede
+
+O navegador trata `http://192.168.x.x` como uma página em que não confia
+inteiramente — só `localhost` e HTTPS contam como confiáveis. Duas coisas
+mudam por causa disso:
+
+- **O catálogo, os torrents e os Baixados funcionam igual.** Quem prepara o
+  vídeo de um torrent é o worker, e ele não depende do navegador.
+- **Abrir um arquivo seu, um vídeo do YouTube ou do Drive não funciona.** Esses
+  três são preparados dentro do navegador, e a ferramenta que faz isso
+  (WebCodecs) o navegador só oferece a páginas em que confia. O site avisa na
+  tela em vez de falhar calado. Para esses, use o micro onde o Docker roda,
+  pelo `localhost`.
+
 > **Isto só vale dentro da sua rede.** Qualquer um conectado no seu Wi-Fi pode
 > abrir o site — não há senha. **Não redirecione a porta 8099 no roteador:**
 > isso colocaria o site na internet aberta, sem TLS e sem login.

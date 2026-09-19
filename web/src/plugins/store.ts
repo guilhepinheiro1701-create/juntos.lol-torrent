@@ -1,4 +1,5 @@
 import type { PluginManifest } from './manifest'
+import { sha256, toHex } from './sha256'
 
 export type PluginOrigin =
   | { kind: 'file'; fileName: string; updateUrl: string | null }
@@ -111,7 +112,20 @@ export function originId(origin: PluginOrigin): Promise<string> {
   return sha256Hex(originKey(origin))
 }
 
+/**
+ * A identidade de um plugin, e a impressao digital da fonte dele.
+ *
+ * O WebCrypto quando ele existe; a conta em JavaScript quando nao existe.
+ * `crypto.subtle` so e oferecido em contexto seguro — HTTPS ou localhost —, e
+ * abrir o site pelo endereco da rede, que e o que a TV e o outro computador
+ * usam, nao e contexto seguro. Sem esta saida, todo o sistema de plugins morre
+ * nessas maquinas, e o built-in nem chega a se instalar.
+ */
 export async function sha256Hex(source: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(source))
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+  const bytes = new TextEncoder().encode(source)
+  if (globalThis.crypto?.subtle !== undefined) {
+    const digest = await crypto.subtle.digest('SHA-256', bytes)
+    return toHex(new Uint8Array(digest))
+  }
+  return toHex(sha256(bytes))
 }

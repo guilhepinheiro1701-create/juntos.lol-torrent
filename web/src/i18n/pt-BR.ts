@@ -1,6 +1,7 @@
 export const ptBR: Record<string, string> = {
   'home.title': 'Abra um vídeo seu',
   'home.guide': 'Um arquivo, um torrent, um link do YouTube ou do Drive. Toca aqui, na sua máquina.',
+  'home.insecureOwnFiles': 'Você abriu o site pelo endereço da rede. Abrir um arquivo seu, um vídeo do YouTube ou do Drive precisa que o navegador confie na página, e isso só acontece em localhost. O catálogo e os torrents funcionam normalmente aqui.',
   'home.back': 'Voltar',
   'home.dropHint': 'MKV, MP4, TORRENT e mais · até 50 GB',
   'home.openTorrent': 'Abrir torrent',

@@ -1,6 +1,7 @@
 export const en: Record<string, string> = {
   'home.title': 'Open a video of your own',
   'home.guide': 'A file, a torrent, a YouTube or Drive link. It plays here, on your machine.',
+  'home.insecureOwnFiles': 'You opened the site by its network address. Opening a file of your own, a YouTube or a Drive video needs the browser to trust the page, which only happens on localhost. The catalogue and torrents work normally here.',
   'home.back': 'Back',
   'home.dropHint': 'MKV, MP4, TORRENT and more · up to 50 GB',
   'home.openTorrent': 'Open torrent',
