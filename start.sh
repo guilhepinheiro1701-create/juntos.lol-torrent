@@ -51,6 +51,14 @@ for tentativa in $(seq 40); do
     command -v open >/dev/null 2>&1 && open http://localhost:8099 >/dev/null 2>&1 || true
     echo
     echo "  Aberto em http://localhost:8099"
+    # O endereço que serve nos outros aparelhos da casa.
+    ips=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -E '^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.)' || true)
+    if [ -n "$ips" ]; then
+      echo
+      echo "  Na TV ou noutro computador da casa, abra:"
+      for ip in $ips; do echo "    http://$ip:8099"; done
+      echo "  Funciona só dentro da sua rede. Não abra essa porta no roteador."
+    fi
     echo "  Para desligar: ./stop.sh"
     echo
     exit 0

@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { Puzzle, Trash2, X } from 'lucide-react'
-import { useT } from '../i18n/useT'
+import { useT, type Translator } from '../i18n/useT'
 import { MorphPanel } from '../ui/MorphPanel'
 import { useMorphingStep } from '../ui/useMorphingStep'
 import { StepBack } from '../ui/StepBack'
 import { buildInstall, canonicalRepoUrl, fetchGitPlugin, readManifestFromSource } from './install'
 import { deletePlugin, getPlugin, listPlugins, originId, putPlugin, type InstalledPlugin, type PluginOrigin } from './store'
 import { approvePendingUpdate, updateAll, updateUrlOf } from './update'
+import { rememberBuiltinRemoved } from './builtin'
 import type { PluginManifest } from './manifest'
 
 type Step = 'list' | 'add'
@@ -18,6 +19,13 @@ interface Candidate {
   manifest: PluginManifest
   origin: PluginOrigin
   replaces: InstalledPlugin | null
+}
+
+/** O que dizer sobre a procedencia de um plugin, numa linha. */
+function originLabel(origin: InstalledPlugin['origin'], t: Translator): string {
+  if (origin.kind === 'git') return origin.updateUrl
+  if (origin.kind === 'builtin') return t('plugins.builtin')
+  return origin.fileName
 }
 
 export function PluginsPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -185,7 +193,7 @@ export function PluginsPanel({ open, onClose }: { open: boolean; onClose: () => 
                       <li key={plugin.id}>
                         <span className="plugins-name">{plugin.manifest.name}</span>
                         <span className="plugins-meta">
-                          {plugin.manifest.version} · {plugin.origin.kind === 'git' ? plugin.origin.updateUrl : plugin.origin.fileName}
+                          {plugin.manifest.version} · {originLabel(plugin.origin, t)}
                         </span>
                         <code className="plugins-hash">{plugin.sha256.slice(0, 12)}</code>
                         <input
@@ -200,7 +208,14 @@ export function PluginsPanel({ open, onClose }: { open: boolean; onClose: () => 
                         <button
                           type="button"
                           aria-label={`${t('plugins.remove')} ${plugin.manifest.name}`}
-                          onClick={async () => { await deletePlugin(plugin.id); await refresh() }}
+                          onClick={async () => {
+                            // Apagar o que veio com o site vale como decisao:
+                            // sem a lapide, ele voltaria no recarregamento
+                            // seguinte e a pessoa nao entenderia por que.
+                            if (plugin.origin.kind === 'builtin') rememberBuiltinRemoved()
+                            await deletePlugin(plugin.id)
+                            await refresh()
+                          }}
                         >
                           <Trash2 size={15} aria-hidden="true" />
                         </button>

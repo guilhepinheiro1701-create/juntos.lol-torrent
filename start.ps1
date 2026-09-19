@@ -138,6 +138,35 @@ try {
     Nota 'Nao consegui abrir o navegador sozinho. Abra voce:'
     Nota '  http://localhost:8099'
 }
+
+# O endereco que serve nos OUTROS aparelhos da casa. Procurar isto a mao, no
+# ipconfig, entre meia duzia de adaptadores virtuais que o proprio Docker cria,
+# e o tipo de coisa que faz desistir.
+#
+# Pelo .NET, e nao por Get-NetIPAddress: aquele cmdlet nao existe em toda
+# instalacao, e "comando nao encontrado" nao se cala com -ErrorAction. Um erro
+# vermelho no fim de uma subida que deu certo assusta a toa.
+function EnderecosDaRede {
+    try {
+        $nome = [System.Net.Dns]::GetHostName()
+        return @([System.Net.Dns]::GetHostAddresses($nome) |
+            Where-Object { $_.AddressFamily -eq 'InterNetwork' } |
+            ForEach-Object { $_.IPAddressToString } |
+            Where-Object { $_ -match '^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.)' } |
+            Select-Object -Unique)
+    } catch {
+        return @()
+    }
+}
+
+$meu = EnderecosDaRede
+if ($meu.Count -gt 0) {
+    Write-Host ''
+    Nota 'Na TV ou noutro computador da casa, abra:'
+    foreach ($ip in $meu) { Write-Host "         http://${ip}:8099" -ForegroundColor White }
+    Nota 'Funciona so dentro da sua rede. Nao abra essa porta no roteador.'
+}
+
 Write-Host ''
 Nota 'Fechar esta janela NAO desliga nada: as caixas continuam rodando em'
 Nota 'segundo plano, e o site segue disponivel. Para desligar, stop.bat.'

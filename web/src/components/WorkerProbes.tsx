@@ -6,6 +6,9 @@ import type { Translator } from '../i18n/useT'
 import type { WorkerProbe } from '../torrent'
 
 function looksLocal(readBase: string): boolean {
+  // Um caminho sem host e o relay deste mesmo servidor: se a pagina abriu, ele
+  // abre. Nunca e o caso de "o worker esta numa rede que voce nao alcanca".
+  if (readBase.startsWith('/')) return false
   try {
     const host = new URL(readBase).hostname
     return host.endsWith('.ts.net') || host.endsWith('.local') || /^(10\.|192\.168\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.|172\.(1[6-9]|2\d|3[01])\.)/.test(host)

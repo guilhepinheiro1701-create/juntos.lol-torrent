@@ -103,9 +103,12 @@ function homeOf(updateUrl: string | null): string | null {
 export async function buildInstall(source: string, origin: PluginOrigin, deps: InstallDeps = {}): Promise<InstalledPlugin> {
   const read = deps.readManifest ?? readManifestFromSource
   const manifest = await read(source)
-  const resolved: PluginOrigin = origin.kind === 'file'
-    ? { ...origin, updateUrl: origin.updateUrl ?? homeOf(manifest.updateUrl) }
-    : { ...origin, updateUrl: canonicalRepoUrl(origin.updateUrl) }
+  const resolved: PluginOrigin = origin.kind === 'builtin'
+    // Nada a resolver: ele veio com o site, e e o site que o atualiza.
+    ? origin
+    : origin.kind === 'file'
+      ? { ...origin, updateUrl: origin.updateUrl ?? homeOf(manifest.updateUrl) }
+      : { ...origin, updateUrl: canonicalRepoUrl(origin.updateUrl) }
   return {
     id: await originId(resolved),
     manifest,

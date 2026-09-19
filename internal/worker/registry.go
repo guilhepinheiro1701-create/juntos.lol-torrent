@@ -91,11 +91,21 @@ type Worker struct {
 
 // EffectiveBase is where browsers reach this worker: its own address, or
 // the fleet's relay when the worker asked to stay private.
+// SameOrigin says the relay lives at whatever address the page was opened
+// from. It is what a single machine wants: the browser fetches the bytes from
+// the same server that served the page, so a viewer on another computer on the
+// network works with nothing configured, and there is no second origin for
+// CORS to have an opinion about.
+const SameOrigin = "same-origin"
+
 func (w *Worker) EffectiveBase(relayBase string) string {
-	if w.Heartbeat.Relayed && relayBase != "" {
-		return relayBase + "/relay/" + w.ID
+	if !w.Heartbeat.Relayed || relayBase == "" {
+		return w.PublicBase
 	}
-	return w.PublicBase
+	if relayBase == SameOrigin {
+		return "/relay/" + w.ID
+	}
+	return relayBase + "/relay/" + w.ID
 }
 
 // Healthy is whether a job may be placed here right now.

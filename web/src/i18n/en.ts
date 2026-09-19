@@ -217,6 +217,7 @@ export const en: Record<string, string> = {
   'details.pluginsBroke': 'The plugins failed while looking for sources:',
   'plugins.title': 'Plugins',
   'plugins.open': 'Plugins',
+  'plugins.builtin': 'ships with the site',
   'plugins.close': 'Close plugins',
   'plugins.back': 'Back',
   'plugins.empty': 'No plugins installed.',

@@ -15,7 +15,8 @@ e as buscas no catálogo.
 
 ## O que está pronto
 
-- catálogo buscável, com as fontes vindas de plugins que você instala, num worker sem acesso a rede;
+- catálogo buscável, com as fontes vindas de plugins que rodam num worker sem acesso a rede; **o plugin de fontes vem junto com o site**, então um navegador novo — a TV da sala — acha filmes sem instalar nada;
+- **assistir de outro aparelho da casa**: o site publica na sua rede e os bytes do vídeo passam pelo próprio servidor, então basta a porta 8099;
 - torrent baixado pelo ss-worker desta instalação, com início progressivo: começa a tocar com os primeiros segmentos, sem esperar o download inteiro;
 - **escolha de disco** antes de baixar, entre os lugares que a instalação declara — a página manda um rótulo, nunca um caminho;
 - **baixar para assistir offline**: o arquivo fica no disco de verdade, sobrevive a reiniciar o worker, e a aba Baixados reabre sem internet nenhuma;

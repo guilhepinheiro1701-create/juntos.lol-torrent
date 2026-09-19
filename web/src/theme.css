@@ -586,6 +586,13 @@ html:has(.catalog-shell) { overscroll-behavior-x: contain; }
 .carousel-viewport { overflow: hidden; padding: 16px 2px 14px; margin: -10px 0 0; }
 .carousel-track { display: flex; gap: 12px; }
 .carousel-track > * { flex: 0 0 clamp(126px, 13.5vw, 172px); min-width: 0; }
+/* Numa TV, vista do sofa, o teto de 172px deixa a capa do tamanho de um selo.
+   A partir de 1600px de largura ele sobe, e o titulo da fileira acompanha. */
+@media (min-width: 1600px) {
+  .carousel-track > * { flex: 0 0 clamp(172px, 11vw, 228px); }
+  .catalog-row h2 { font-size: 22px; }
+  .poster-name { font-size: 15px; }
+}
 .details-episode-carousel .carousel-viewport { padding: 4px 2px 12px; }
 .details-episode-carousel .carousel-track { gap: 12px; }
 .details-episode-carousel .carousel-track > * { flex: 0 0 clamp(220px, 26vw, 300px); }

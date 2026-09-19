@@ -30,7 +30,12 @@ services:
         GIT_SHA: local
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8099:8080"
+      # 0.0.0.0 de propósito: é o que deixa outro computador da casa abrir o
+      # site para assistir na TV. Só a sua rede o alcança — o roteador não
+      # deixa a internet entrar sozinha, e você não deve abrir essa porta nele.
+      # Para voltar a trancar no próprio micro: SITE_BIND=127.0.0.1 no
+      # .env.local.
+      - "${SITE_BIND:-0.0.0.0}:8099:8080"
     environment:
       REDIS_URL: redis://redis:6379
       DATA_DIR: /data
@@ -50,6 +55,12 @@ services:
       # há ninguém. O remux baixava o filme inteiro e nunca conseguia enviar um
       # segmento sequer, e a tela ficava em "Aguardando o início do envio".
       REMOTE_REMUX_API_BASE: http://app:8080
+
+      # Os bytes do vídeo passam por este servidor em vez de o navegador ir
+      # buscá-los no worker. Numa máquina só isso não custa quase nada, e é o
+      # que faz o site funcionar de outro computador: o worker mora dentro do
+      # compose e o seu endereço não existe fora dele.
+      WORKER_RELAY_BASE: same-origin
       ROOM_TTL_HOURS: ${ROOM_TTL_HOURS:-5}
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-51200}
 
@@ -88,7 +99,13 @@ services:
       # Sem domínio público não há ACME. Em HTTP puro o navegador não reclama,
       # porque a própria página está em http://localhost.
       SS_WORKER_TLS: "off"
-      SS_WORKER_PUBLIC_HOSTNAME: localhost
+      # O nome do serviço, não localhost: quem resolve este endereço agora é o
+      # servidor, de dentro da rede do compose, e lá "localhost" seria ele
+      # próprio.
+      SS_WORKER_PUBLIC_HOSTNAME: worker
+      # Diz ao servidor que pode falar pelo worker.
+      SS_WORKER_RELAYED: "1"
+
       SS_WORKER_HTTP_ADDR: "[::]:8081"
       SS_WORKER_BT_PORT: "4240"
       SS_WORKER_DISK_QUOTA_GB: ${WORKER_DISK_QUOTA_GB:-35}
@@ -110,6 +127,8 @@ services:
       # aqui é de dentro do container, então precisa vir montado em `volumes`.
       SS_WORKER_STORAGE_DIRS: ${WORKER_STORAGE_DIRS:-}
     ports:
+      # Continua só no próprio micro: com o relay ligado, o navegador nunca
+      # precisa deste endereço. Fica publicado para depurar.
       - "127.0.0.1:8081:8081"
       # Esta o roteador precisa deixar entrar para o torrent pegar peers.
       - "4240:4240"

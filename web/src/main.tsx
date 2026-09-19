@@ -22,6 +22,13 @@ createRoot(document.getElementById('root')!).render(
 
 registerYoutubeBackend(jlocalBackend)
 
+// O plugin que vem com o site entra antes de qualquer ida a rede: e o que faz
+// o catalogo achar fontes num navegador que nunca instalou nada — a TV da
+// sala, o computador do quarto.
+void import('./plugins/builtin')
+  .then(({ ensureBuiltin }) => ensureBuiltin())
+  .catch((error) => console.error('builtin plugin failed', error))
+
 const checkPlugins = () => { void import('./plugins/update').then(({ updateAll }) => updateAll()).catch(() => undefined) }
 const idle = window.requestIdleCallback
 if (typeof idle === 'function') idle(checkPlugins, { timeout: 3_000 })

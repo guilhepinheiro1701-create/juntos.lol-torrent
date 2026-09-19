@@ -217,6 +217,7 @@ export const ptBR: Record<string, string> = {
   'details.pluginsBroke': 'Os plugins falharam ao procurar fontes:',
   'plugins.title': 'Plugins',
   'plugins.open': 'Plugins',
+  'plugins.builtin': 'vem com o site',
   'plugins.close': 'Fechar plugins',
   'plugins.back': 'Voltar',
   'plugins.empty': 'Nenhum plugin instalado.',

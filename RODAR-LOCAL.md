@@ -94,6 +94,34 @@ Tudo publica em `127.0.0.1` de propósito. **Não exponha isto na internet:** n�
 
 A porta **4240** (TCP e UDP) é a única que o roteador precisa deixar entrar, e só para o torrent achar peers. **Abra à mão no roteador:** de dentro de um container, o pedido automático (UPnP) fala com o Docker, não com o seu roteador, então não adianta.
 
+## Assistir de outro computador, ou na TV
+
+Deixe este micro ligado com o Docker rodando e abra o site de qualquer aparelho
+da casa. O `start.bat` imprime o endereço no fim:
+
+```
+Na TV ou noutro computador da casa, abra:
+   http://192.168.0.10:8099
+```
+
+Não há nada a configurar. Os pedaços do vídeo passam por este mesmo servidor,
+então o segundo aparelho não precisa alcançar o baixador — só a porta 8099.
+
+O plugin de fontes **vem junto com o site**, então o navegador da TV acha
+filmes na primeira vez que abre, sem instalar nada.
+
+> **Isto só vale dentro da sua rede.** Qualquer um conectado no seu Wi-Fi pode
+> abrir o site — não há senha. **Não redirecione a porta 8099 no roteador:**
+> isso colocaria o site na internet aberta, sem TLS e sem login.
+>
+> Para voltar a trancar tudo neste micro, ponha `SITE_BIND=127.0.0.1` no
+> `.env.local` e rode `stop.bat` e `start.bat`.
+
+### Na TV mesmo
+
+Se a TV tiver navegador, é só digitar o endereço. Se não tiver, o caminho mais
+simples é um computador ligado nela por HDMI, com o navegador em tela cheia.
+
 ## Escolher em que pasta os filmes ficam
 
 **Clique em `pasta.bat`** (ou `./pasta.sh`). Ele pergunta o caminho — por

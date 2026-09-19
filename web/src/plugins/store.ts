@@ -3,6 +3,15 @@ import type { PluginManifest } from './manifest'
 export type PluginOrigin =
   | { kind: 'file'; fileName: string; updateUrl: string | null }
   | { kind: 'git'; updateUrl: string; commit: string }
+  /**
+   * O que vem junto com o site.
+   *
+   * Sem endereco de atualizacao de proposito: quem o atualiza e o `git pull`
+   * do proprio site, e nao uma ida a rede. Isso tambem e o que faz o catalogo
+   * funcionar num computador que nunca instalou nada — a lista de plugins mora
+   * no navegador de cada um, e a TV da sala e um navegador novo.
+   */
+  | { kind: 'builtin'; name: string; updateUrl: null }
 
 /** A newer version held back because it wants hosts the install never approved. */
 export interface PendingUpdate {
@@ -93,7 +102,9 @@ export function deletePlugin(id: string): Promise<void> {
  * channel. Excludes the commit and a file's later-learned `updateUrl`.
  */
 export function originKey(origin: PluginOrigin): string {
-  return origin.kind === 'git' ? `git:${origin.updateUrl}` : `file:${origin.fileName}`
+  if (origin.kind === 'git') return `git:${origin.updateUrl}`
+  if (origin.kind === 'builtin') return `builtin:${origin.name}`
+  return `file:${origin.fileName}`
 }
 
 export function originId(origin: PluginOrigin): Promise<string> {
