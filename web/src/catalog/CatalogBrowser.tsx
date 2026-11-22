@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { ArrowLeft, LoaderCircle, Search, X } from 'lucide-react'
 import { useT } from '../i18n/useT'
@@ -67,11 +67,13 @@ interface CatalogBrowserProps {
   onOpenTitle: (open: TitleOpen) => void
   compact?: boolean
   hideSearch?: boolean
+  /** A fileira "Continuar assistindo"; o Home passa pronta, o browser so posiciona. */
+  continueRow?: ReactNode
 }
 
 // The searchable board: a search field over rows of posters. Selecting a
 // title is the parent's business — the browser only reports the pick.
-export const CatalogBrowser = memo(function CatalogBrowser({ onOpenTitle, compact, hideSearch }: CatalogBrowserProps) {
+export const CatalogBrowser = memo(function CatalogBrowser({ onOpenTitle, compact, hideSearch, continueRow }: CatalogBrowserProps) {
   const t = useT()
   const reduceMotion = useReducedMotion()
   const [rows, setRows] = useState<Record<string, RowState>>({})
@@ -344,7 +346,8 @@ export const CatalogBrowser = memo(function CatalogBrowser({ onOpenTitle, compac
           {featured.length > 0 ? <FeaturedHero metas={featured} onOpen={onOpenTitle} /> : (
             rows.movies?.status === 'error' ? null : <div className="featured-skeleton" aria-hidden="true" />
           )}
-          <BrandTiles label={t('catalog.studios')} onPick={openBrand} />
+          <BrandTiles label={t('catalog.studios')} prevLabel={t('catalog.scrollBack')} nextLabel={t('catalog.scrollForward')} onPick={openBrand} />
+          {continueRow}
           {ROWS.map((row) => {
             const state = rows[row.key] ?? { status: 'loading' as const }
             return (

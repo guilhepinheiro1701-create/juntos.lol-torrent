@@ -39,13 +39,15 @@ import { FleetStatus } from '../components/FleetStatus'
 import { nowPlayingFromPick, nowPlayingKey } from '../catalog/useNextEpisode'
 import { buildMagnet } from '../catalog/streams'
 import { queueDownload } from '../queue'
+import { isFinished, rememberStart, type RecentEntry } from '../recents'
+import { RecentShelf, useRecents } from '../components/RecentShelf'
 import type { CatalogMeta, MetaType } from '../catalog/tmdb'
 import type { TitleOpen } from '../catalog/PosterCard'
 
 import { MAX_UPLOAD_BYTES } from '../limits'
 import { Mark, Wordmark, WRITES_ON_LOAD } from '../ui/Brand'
 
-type HomeView = 'catalog' | 'manual' | 'status' | 'library'
+type HomeView = 'catalog' | 'recent' | 'manual' | 'status' | 'library'
 export { MAX_UPLOAD_BYTES }
 
 // The manual-upload panel's steps; false is the panel being shut.
@@ -63,7 +65,7 @@ type PendingMedia =
   | { kind: 'torrent'; file: TorrentVideoFile; session: TorrentSession }
   | { kind: 'youtube'; session: YoutubeSession }
   | { kind: 'drive'; file: TorrentVideoFile; session: TorrentSession }
-  | { kind: 'stream'; pick: TitlePick }
+  | { kind: 'stream'; pick: TitlePick; resumeAtMs?: number }
 
 /**
  * Se ha um torrent por tras, e portanto algo que o worker possa guardar.
@@ -125,6 +127,7 @@ export function Home() {
   const view: HomeView = location.pathname.startsWith('/status') ? 'status'
     : location.pathname.startsWith('/downloads') ? 'library'
       : location.pathname.startsWith('/open') ? 'manual'
+        : location.pathname.startsWith('/recent') ? 'recent'
         : 'catalog'
 
   const showView = (next: HomeView) => {
@@ -149,7 +152,7 @@ export function Home() {
   // Always the four. Hiding downloads until there was something in them read,
   // from the outside, as the feature not existing at all — and a person cannot
   // download a film through a tab they have never been shown.
-  const tabs: HomeView[] = ['catalog', 'manual', 'library', 'status']
+  const tabs: HomeView[] = ['catalog', 'recent', 'library', 'manual', 'status']
 
   useEffect(() => {
     setError('')
@@ -212,6 +215,21 @@ export function Home() {
   }
 
   /**
+   * "Continuar": a mesma fonte de antes, sem a lista de fontes nem o dialogo
+   * de onde guardar — quem ja escolheu uma vez nao precisa escolher de novo.
+   * `fromStartMs` 0 comeca do inicio (assistir de novo, ou o proximo episodio).
+   */
+  const playDirect = (pick: TitlePick, resumeAtMs: number) => {
+    setError('')
+    void startUpload(false, { kind: 'stream', pick, resumeAtMs })
+  }
+  const recents = useRecents()
+  const resumeRecent = (entry: RecentEntry) => playDirect(entry.pick, isFinished(entry) ? 0 : entry.positionMs)
+  const recentDetails = (entry: RecentEntry) => openTitle({
+    meta: { id: entry.catalogId, type: entry.type, name: entry.name, poster: entry.poster, releaseInfo: '', background: entry.background || undefined },
+  })
+
+  /**
    * Poe o filme para baixar e fica onde esta.
    *
    * Nada de sala, nada de player: o worker baixa sozinho porque o trabalho vai
@@ -234,8 +252,8 @@ export function Home() {
     })
   }
 
-  const startUpload = async (keep = false) => {
-    const media = pendingMedia
+  const startUpload = async (keep = false, direct?: PendingMedia) => {
+    const media = direct ?? pendingMedia
     if (!media || starting) return
     setPendingMedia(null)
 
@@ -313,6 +331,7 @@ export function Home() {
           if (playing) localStorage.setItem(nowPlayingKey(room.roomID), JSON.stringify(playing))
         } catch {}
       }
+      if (media.kind === 'stream') rememberStart(room.roomID, media.pick, media.resumeAtMs ?? 0)
       const nextHistory = [
         { id: room.roomID, fileName, createdAt: Date.now() },
         ...history.filter((entry) => entry.id !== room.roomID),
@@ -483,6 +502,7 @@ export function Home() {
               ) : null}
               <span className="season-tab-label">
                 {value === 'catalog' ? t('home.tabCatalog')
+                  : value === 'recent' ? t('home.tabRecent')
                   : value === 'manual' ? t('home.tabOwn')
                     : value === 'library' ? t('home.tabDownloads')
                       : t('home.tabStatus')}
@@ -504,11 +524,17 @@ export function Home() {
       <section className="catalog-stage">
         {view === 'status' ? (
           <FleetStatus />
+        ) : view === 'recent' ? (
+          <RecentShelf entries={recents} layout="grid" onResume={resumeRecent} onDetails={recentDetails} t={t} />
         ) : view === 'library' ? (
           <LibraryShelf t={t} onOpened={(roomId) => navigate(`/room/${roomId}`)} />
         ) : view === 'catalog' ? (
           online
-            ? <CatalogBrowser onOpenTitle={openTitle} hideSearch={detailsOpen !== null} />
+            ? <CatalogBrowser
+                onOpenTitle={openTitle}
+                hideSearch={detailsOpen !== null}
+                continueRow={<RecentShelf entries={recents.filter((entry) => !isFinished(entry)).slice(0, 12)} layout="row" onResume={resumeRecent} onDetails={recentDetails} t={t} />}
+              />
             : <OfflineNotice t={t} onDownloads={() => showView('library')} />
         ) : (
           <div className="manual-stage">
@@ -560,6 +586,7 @@ export function Home() {
             mode="create"
             onClose={closeTitle}
             onPickStream={pickStream}
+            onPlayDirect={playDirect}
           />
         </Suspense>
       ) : null}

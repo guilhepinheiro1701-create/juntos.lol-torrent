@@ -9,11 +9,13 @@ import { languageName } from './languages'
 import { Carousel } from './Carousel'
 import { FadeImg } from './FadeImg'
 import { useT } from '../i18n/useT'
-import { fetchMeta, type MetaDetail, type MetaVideo } from './tmdb'
+import { fetchMeta, type MetaDetail, type MetaType, type MetaVideo } from './tmdb'
 import { isPlayable, streamKey, type CatalogStream, type StreamResolution, type StreamTarget } from './streams'
 import { resolveStreams } from '../plugins/resolve'
 import type { TitleOpen } from './PosterCard'
 import { Badge } from '@/components/ui/badge'
+import { ContinueCard, episodePick, sameSource } from './ContinueCard'
+import { recentFor, subscribeRecents, type RecentEntry } from '../recents'
 
 const CARD_RADIUS = '14px'
 const MORPH_EASE: [number, number, number, number] = [0.77, 0, 0.175, 1]
@@ -27,6 +29,8 @@ export interface TitlePick {
   displayName: string
   metaName: string
   poster: string
+  /** De onde veio no catalogo, para "Recentes" reabrir a pagina e mostrar a paisagem. */
+  catalog?: { id: string; type: MetaType; background?: string }
 }
 
 interface MetaDetailsProps {
@@ -35,6 +39,8 @@ interface MetaDetailsProps {
   focus?: { season: number; episode: number }
   onClose: () => void
   onPickStream: (pick: TitlePick) => void
+  /** Comeca sem passar pelo dialogo ("Continuar"); sem ele, cai no onPickStream. */
+  onPlayDirect?: (pick: TitlePick, resumeAtMs: number) => void
   onOpenPlugins?: () => void
 }
 
@@ -66,7 +72,7 @@ function SourcesEmpty({ icon, title, hint, action }: {
 // O painel nasce do pôster clicado (FLIP) e só revela o conteúdo quando o morph
 // pousa; sem rect de origem ele entra com fade, e fechar é sempre fade. No
 // celular é uma folha que sobe do rodapé e desce por ali, sem morph.
-export function MetaDetails({ open, mode, focus, onClose, onPickStream, onOpenPlugins }: MetaDetailsProps) {
+export function MetaDetails({ open, mode, focus, onClose, onPickStream, onPlayDirect, onOpenPlugins }: MetaDetailsProps) {
   const t = useT()
   const reduceMotion = useReducedMotion()
   const flatReveal = reduceMotion || isGecko
@@ -78,7 +84,7 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onOpenPl
   const [detail, setDetail] = useState<MetaDetail | null>(null)
   const [detailFailed, setDetailFailed] = useState(false)
   const [detailRetry, setDetailRetry] = useState(0)
-  const [season, setSeason] = useState(focus?.season ?? 1)
+  const [season, setSeason] = useState(() => focus?.season ?? recentFor(open.meta.type, [open.meta.id])?.season ?? 1)
   const [selected, setSelected] = useState<MetaVideo | null>(null)
   const [streams, setStreams] = useState<CatalogStream[] | null>(null)
   const [streamsFailed, setStreamsFailed] = useState(false)
@@ -90,6 +96,19 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onOpenPl
   const [resolutionFilter, setResolutionFilter] = useState<'all' | StreamResolution>('all')
   const [languageFilter, setLanguageFilter] = useState('all')
   const meta = open.meta
+  const [recent, setRecent] = useState<RecentEntry | null>(() => recentFor(meta.type, [meta.id]))
+  useEffect(() => {
+    const read = () => setRecent(recentFor(meta.type, [meta.id, detail?.imdbId]))
+    read()
+    return subscribeRecents(read)
+  }, [meta.id, meta.type, detail?.imdbId])
+  const playDirect = (pick: TitlePick, resumeAtMs: number) => {
+    if (onPlayDirect) onPlayDirect(pick, resumeAtMs)
+    else onPickStream(pick)
+  }
+  // Numa serie com historico, a fonte que tocou antes vira um atalho em cada
+  // episodio: um clique e toca, sem garimpar a lista de novo.
+  const remembered = recent && meta.type === 'series' && streams ? sameSource(streams, recent.pick.stream) : null
   const sheet = useMemo(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 620px)').matches, [])
   const morphs = Boolean(open.rect) && !reduceMotion && !sheet
 
@@ -331,6 +350,7 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onOpenPl
             {detail?.genres.length ? <span>{detail.genres.slice(0, 3).join(' · ')}</span> : null}
           </p>
           {detail?.description ? <p className="details-description">{detail.description}</p> : null}
+          {recent ? <ContinueCard entry={recent} videos={detail?.videos ?? []} onPlay={playDirect} t={t} /> : null}
           {detail?.cast.length ? (
             <p className="details-cast">{t('details.cast')}: {detail.cast.slice(0, 5).join(', ')}</p>
           ) : null}
@@ -512,6 +532,20 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onOpenPl
                   }}
                 />
               ) : (
+                <>
+                {remembered && recent && selected ? (
+                  <button
+                    type="button"
+                    className="same-source"
+                    onClick={() => playDirect(episodePick(recent, selected, remembered), 0)}
+                  >
+                    <Play size={16} aria-hidden="true" />
+                    <span>
+                      <strong>{t('recent.useSameSource')}</strong>
+                      <small>{remembered.quality || remembered.resolution} · {remembered.pluginName}</small>
+                    </span>
+                  </button>
+                ) : null}
                 <motion.div
                   key={`streams:${target.season ?? 0}:${target.episode ?? 0}`}
                   className="stream-list"
@@ -533,6 +567,7 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onOpenPl
                           : meta.name,
                         metaName: detail?.name ?? meta.name,
                         poster: detail?.poster || meta.poster,
+                        catalog: { id: meta.id, type: meta.type, background: detail?.background || meta.background },
                       })}
                     >
                       <span className="stream-label">{stream.label}</span>
@@ -548,6 +583,7 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onOpenPl
                     </button>
                   ))}
                 </motion.div>
+                </>
               )}
             </motion.div>
           ) : null}

@@ -8,6 +8,9 @@ import pixarLogo from '../assets/brands/pixar.svg'
 import starwarsLogo from '../assets/brands/starwars.svg'
 import dcLogo from '../assets/brands/dc.svg'
 import wizardingLogo from '../assets/brands/wizarding.svg'
+import netflixLogo from '../assets/brands/netflix.svg'
+import hboLogo from '../assets/brands/hbo.svg'
+import warnerLogo from '../assets/brands/warner.svg'
 
 /**
  * As colecoes por produtora (Marvel, Disney, Pixar...).
@@ -17,7 +20,7 @@ import wizardingLogo from '../assets/brands/wizarding.svg'
  * normal e so entra se o ano bater — assim um nome parecido de outro filme
  * nunca aparece no lugar errado; na duvida, o titulo simplesmente fica de fora.
  */
-export type BrandKey = 'marvel' | 'disney' | 'pixar' | 'starwars' | 'dc' | 'wizarding'
+export type BrandKey = 'marvel' | 'disney' | 'pixar' | 'starwars' | 'dc' | 'wizarding' | 'netflix' | 'hbo' | 'warner'
 
 interface BrandTitle { title: string; year: string; type?: MetaType }
 
@@ -109,6 +112,47 @@ export const BRANDS: Brand[] = [
       { title: 'Harry Potter and the Deathly Hallows: Part 1', year: '2010' },
       { title: 'Harry Potter and the Deathly Hallows: Part 2', year: '2011' },
       { title: 'Fantastic Beasts and Where to Find Them', year: '2016' },
+    ],
+  },
+  {
+    key: 'netflix', name: 'Netflix', colors: ['#E50914', '#3A0306'],
+    logos: [netflixLogo],
+    titles: [
+      { title: 'Stranger Things', year: '2016', type: 'series' }, { title: 'Wednesday', year: '2022', type: 'series' },
+      { title: 'Squid Game', year: '2021', type: 'series' }, { title: 'Money Heist', year: '2017', type: 'series' },
+      { title: 'The Crown', year: '2016', type: 'series' }, { title: 'Dark', year: '2017', type: 'series' },
+      { title: 'The Witcher', year: '2019', type: 'series' }, { title: 'Bridgerton', year: '2020', type: 'series' },
+      { title: 'Narcos', year: '2015', type: 'series' }, { title: 'Ozark', year: '2017', type: 'series' },
+      { title: 'Black Mirror', year: '2011', type: 'series' }, { title: 'The Irishman', year: '2019' },
+      { title: 'Red Notice', year: '2021' }, { title: 'Extraction', year: '2020' }, { title: "Don't Look Up", year: '2021' },
+      { title: 'Glass Onion: A Knives Out Mystery', year: '2022' },
+    ],
+  },
+  {
+    key: 'hbo', name: 'HBO', colors: ['#7B2FF7', '#170830'], mono: true,
+    logos: [hboLogo],
+    titles: [
+      { title: 'Game of Thrones', year: '2011', type: 'series' }, { title: 'House of the Dragon', year: '2022', type: 'series' },
+      { title: 'The Last of Us', year: '2023', type: 'series' }, { title: 'Succession', year: '2018', type: 'series' },
+      { title: 'Euphoria', year: '2019', type: 'series' }, { title: 'The Sopranos', year: '1999', type: 'series' },
+      { title: 'Chernobyl', year: '2019', type: 'series' }, { title: 'True Detective', year: '2014', type: 'series' },
+      { title: 'The White Lotus', year: '2021', type: 'series' }, { title: 'Westworld', year: '2016', type: 'series' },
+      { title: 'The Wire', year: '2002', type: 'series' }, { title: 'Band of Brothers', year: '2001', type: 'series' },
+      { title: 'Big Little Lies', year: '2017', type: 'series' }, { title: 'The Penguin', year: '2024', type: 'series' },
+    ],
+  },
+  {
+    key: 'warner', name: 'Warner Bros.', colors: ['#1B5FD9', '#071633'],
+    logos: [warnerLogo],
+    titles: [
+      { title: 'The Matrix', year: '1999' }, { title: 'Inception', year: '2010' }, { title: 'Dune', year: '2021' },
+      { title: 'Dune: Part Two', year: '2024' }, { title: 'Barbie', year: '2023' }, { title: 'Mad Max: Fury Road', year: '2015' },
+      { title: 'The Lord of the Rings: The Fellowship of the Ring', year: '2001' },
+      { title: 'The Lord of the Rings: The Two Towers', year: '2002' },
+      { title: 'The Lord of the Rings: The Return of the King', year: '2003' },
+      { title: 'Interstellar', year: '2014' }, { title: 'Gravity', year: '2013' }, { title: 'Dunkirk', year: '2017' },
+      { title: 'Tenet', year: '2020' }, { title: 'It', year: '2017' }, { title: 'The Conjuring', year: '2013' },
+      { title: 'Godzilla x Kong: The New Empire', year: '2024' },
     ],
   },
 ]

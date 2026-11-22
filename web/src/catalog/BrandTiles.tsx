@@ -1,8 +1,11 @@
 import { memo, useState, type CSSProperties } from 'react'
 import { BRANDS, type Brand } from './brands'
+import { Carousel } from './Carousel'
 
 interface BrandTilesProps {
   label: string
+  prevLabel: string
+  nextLabel: string
   onPick: (brand: Brand) => void
 }
 
@@ -27,9 +30,10 @@ function BrandLogo({ brand }: { brand: Brand }) {
  * Os tiles das produtoras, logo abaixo do destaque. A cor da marca vira o
  * fundo e a luz que o tile emite ao passar o mouse ou com o foco do controle.
  */
-export const BrandTiles = memo(function BrandTiles({ label, onPick }: BrandTilesProps) {
+export const BrandTiles = memo(function BrandTiles({ label, prevLabel, nextLabel, onPick }: BrandTilesProps) {
   return (
     <nav className="brand-tiles" aria-label={label}>
+      <Carousel className="brand-carousel" prevLabel={prevLabel} nextLabel={nextLabel}>
       {BRANDS.map((brand) => (
         <button
           key={brand.key}
@@ -43,6 +47,7 @@ export const BrandTiles = memo(function BrandTiles({ label, onPick }: BrandTiles
           <BrandLogo brand={brand} />
         </button>
       ))}
+      </Carousel>
     </nav>
   )
 })

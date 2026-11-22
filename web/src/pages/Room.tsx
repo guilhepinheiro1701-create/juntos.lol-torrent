@@ -26,6 +26,7 @@ import { WorkerProbes } from '../components/WorkerProbes'
 import type { TitlePick } from '../catalog/MetaDetails'
 import { NextEpisodeCard } from '../catalog/NextEpisode'
 import { nowPlayingFromPick, nowPlayingKey, useNextEpisode, type NowPlaying } from '../catalog/useNextEpisode'
+import { notePosition, rememberStart, takeResumeAt } from '../recents'
 import { TorrentPicker } from '../components/TorrentPicker'
 import { YoutubePicker } from '../components/YoutubePicker'
 import { YoutubeError, isYoutubeError, openYoutube, youtubeErrorKey, youtubeErrorRetryable, type YoutubeSession } from '../youtube'
@@ -354,6 +355,7 @@ function ConnectedRoom({ room }: { room: RoomInfo }) {
     setCatalogFocus(null)
     const playing = nowPlayingFromPick(pick)
     setNowPlaying(playing)
+    rememberStart(room.id, pick)
     try {
       if (playing) localStorage.setItem(nowPlayingKey(room.id), JSON.stringify(playing))
       else localStorage.removeItem(nowPlayingKey(room.id))
@@ -422,6 +424,39 @@ function ConnectedRoom({ room }: { room: RoomInfo }) {
       if (error) setUploadFailed(error)
     })
   }, [room.id, liveRoom.mediaGeneration])
+
+  // Recentes: onde a pessoa esta, guardado a cada poucos segundos e ao sair,
+  // para o "Continuar" voltar exatamente aqui.
+  useEffect(() => {
+    if (mediaStatus !== 'ready') return
+    const save = () => {
+      const video = videoRef.current
+      const durationMs = video && Number.isFinite(video.duration) ? video.duration * 1000 + mediaOffsetMsRef.current : 0
+      notePosition(room.id, expectedPositionMs(positionRef.current, Date.now()), durationMs)
+    }
+    const timer = window.setInterval(save, 5_000)
+    window.addEventListener('pagehide', save)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener('pagehide', save)
+      save()
+    }
+  }, [mediaStatus, room.id])
+
+  // Aberta a partir de "Continuar": pula para onde parou assim que o video
+  // souber a propria duracao (antes disso o navegador ignora o salto).
+  const resumedRef = useRef(false)
+  useEffect(() => {
+    if (mediaStatus !== 'ready' || shownGate !== null || resumedRef.current) return
+    const video = videoRef.current
+    if (!video) return
+    resumedRef.current = true
+    const at = takeResumeAt(room.id)
+    if (at <= 0) return
+    const jump = () => { sync.send('seek', { positionMs: at }) }
+    if (video.readyState >= 1) jump()
+    else video.addEventListener('loadedmetadata', jump, { once: true })
+  }, [mediaStatus, shownGate, room.id, sync])
 
   const nextEpisode = useNextEpisode(
     nowPlaying,
