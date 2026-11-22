@@ -37,6 +37,14 @@ export const PosterCard = memo(function PosterCard({ meta, onOpen }: PosterCardP
 
   return (
     <button type="button" className="poster-card" onClick={open} aria-label={meta.name}>
+      {/* A luz que a capa emite nas cores dela: a propria imagem, desfocada
+          por tras do card. Nao precisa ler pixel nenhum (o que exigiria CORS
+          do servidor de imagens) e sai de graca do cache, ja que e a mesma URL. */}
+      {meta.poster ? (
+        <span className="poster-glow" aria-hidden="true">
+          <img src={meta.poster} alt="" loading="lazy" decoding="async" />
+        </span>
+      ) : null}
       <span ref={artRef} className="poster-art">
         {meta.poster ? (
           <FadeImg src={meta.poster} alt="" loading="lazy" />

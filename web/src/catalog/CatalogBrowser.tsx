@@ -1,13 +1,17 @@
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { Search, X } from 'lucide-react'
+import { LoaderCircle, Search, X } from 'lucide-react'
 import { useT } from '../i18n/useT'
 import { fetchCatalog, searchCatalog, type CatalogMeta, type MetaType } from './tmdb'
 import { PosterCard, type TitleOpen } from './PosterCard'
 import { Carousel } from './Carousel'
+import { FeaturedHero } from './FeaturedHero'
 import { prefetchMetaDetails } from './lazyDetails'
 
-const SEARCH_DEBOUNCE_MS = 300
+// Curto o bastante para parecer instantaneo enquanto se digita, longo o
+// bastante para nao disparar uma busca por letra.
+const SEARCH_DEBOUNCE_MS = 220
+const FEATURED_COUNT = 6
 
 interface RowSpec {
   key: string
@@ -23,6 +27,37 @@ const ROWS: RowSpec[] = [
   { key: 'comedy', labelKey: 'catalog.comedy', type: 'series', genre: 'Comedy' },
   { key: 'animation', labelKey: 'catalog.animation', type: 'series', genre: 'Animation' },
 ]
+
+/**
+ * Os titulos do destaque: os mais populares que tem paisagem, de filmes e
+ * series alternados. Sem paisagem nenhuma (catalogo antigo), usa o pôster.
+ */
+function pickFeatured(rows: Record<string, RowState>): CatalogMeta[] {
+  const lists = ['movies', 'series']
+    .map((key) => rows[key])
+    .map((state) => (state?.status === 'ready' ? state.metas : []))
+  const withArt = lists.map((list) => list.filter((meta) => meta.background))
+  const source = withArt.some((list) => list.length > 0) ? withArt : lists.map((list) => list.filter((meta) => meta.poster))
+  const picked: CatalogMeta[] = []
+  for (let index = 0; picked.length < FEATURED_COUNT && index < 20; index += 1) {
+    for (const list of source) {
+      if (index < list.length && picked.length < FEATURED_COUNT) picked.push(list[index])
+    }
+  }
+  return picked
+}
+
+/** O catalogo rola dentro de um container em alguns layouts e na janela em outros. */
+function scrollBoardToTop(root: HTMLElement | null) {
+  for (let node = root?.parentElement; node; node = node.parentElement) {
+    const overflow = window.getComputedStyle(node).overflowY
+    if ((overflow === 'auto' || overflow === 'scroll') && node.scrollTop > 0) {
+      node.scrollTo({ top: 0 })
+      return
+    }
+  }
+  if (window.scrollY > 0) window.scrollTo({ top: 0 })
+}
 
 type RowState = { status: 'loading' } | { status: 'error' } | { status: 'ready'; metas: CatalogMeta[] }
 
@@ -119,9 +154,18 @@ export const CatalogBrowser = memo(function CatalogBrowser({ onOpenTitle, compac
     return () => { cancelled = true }
   }, [retrySeq])
 
+  // Enter busca na hora (e fecha o teclado do celular/TV); sem Enter, a busca
+  // sai sozinha logo depois que a pessoa para de digitar.
+  const [flushSeq, setFlushSeq] = useState(0)
+  const flushedRef = useRef(0)
+
   useEffect(() => {
+    const wasEmpty = queryRef.current.trim() === ''
     queryRef.current = query
+    if (wasEmpty && query.trim() !== '') scrollBoardToTop(rootRef.current)
     const seq = (searchSeqRef.current += 1)
+    const immediate = flushSeq !== flushedRef.current
+    flushedRef.current = flushSeq
     const trimmed = query.trim()
     if (!trimmed) {
       setResults(null)
@@ -141,11 +185,12 @@ export const CatalogBrowser = memo(function CatalogBrowser({ onOpenTitle, compac
           setResults([])
           setSearching(false)
         })
-    }, SEARCH_DEBOUNCE_MS)
+    }, immediate ? 0 : SEARCH_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
-  }, [query])
+  }, [query, flushSeq])
 
   const typing = query.trim() !== ''
+  const featured = useMemo(() => pickFeatured(rows), [rows])
 
   const enter = reduceMotion
     ? { initial: { opacity: 0 }, animate: { opacity: 1 } }
@@ -172,8 +217,8 @@ export const CatalogBrowser = memo(function CatalogBrowser({ onOpenTitle, compac
           }
         } : undefined}
       >
-        <motion.span layout={!reduceMotion} className="catalog-search-icon" aria-hidden="true">
-          <Search size={17} />
+        <motion.span layout={!reduceMotion} className={`catalog-search-icon ${searching ? 'is-busy' : ''}`} aria-hidden="true">
+          {searching ? <LoaderCircle size={17} /> : <Search size={17} />}
         </motion.span>
         <AnimatePresence mode="popLayout" initial={false}>
           {!searchCompact ? (
@@ -197,6 +242,15 @@ export const CatalogBrowser = memo(function CatalogBrowser({ onOpenTitle, compac
                   if (isMobile() && queryRef.current.trim() === '') setSearchCompact(true)
                 }}
                 onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter') return
+                  event.preventDefault()
+                  setFlushSeq((value) => value + 1)
+                  if (isMobile()) event.currentTarget.blur()
+                }}
+                enterKeyHint="search"
+                autoComplete="off"
+                spellCheck={false}
               />
               {query ? (
                 <button type="button" className="catalog-search-clear" aria-label={t('catalog.clearSearch')} onClick={() => setQuery('')}>
@@ -208,75 +262,70 @@ export const CatalogBrowser = memo(function CatalogBrowser({ onOpenTitle, compac
         </AnimatePresence>
       </motion.div>
 
-      {typing && results === null ? (
-        ['catalog.movies', 'catalog.series'].map((labelKey) => (
-          <section key={labelKey} className="catalog-row" aria-hidden="true">
-            <h2>{t(labelKey)}</h2>
-            <div className="catalog-strip">
-              {Array.from({ length: 8 }, (_, index) => <span key={index} className="poster-skeleton" />)}
+      {typing ? (
+        <section className="search-results" aria-label={t('catalog.search')} aria-busy={searching}>
+          <header className="search-results-head">
+            <h2>{t('catalog.resultsFor').replace('{query}', query.trim())}</h2>
+            {results !== null && results.length > 0 ? (
+              <span>{t('catalog.resultsCount').replace('{count}', String(results.length))}</span>
+            ) : null}
+          </header>
+          {results === null ? (
+            <div className="search-grid" aria-hidden="true">
+              {Array.from({ length: 12 }, (_, index) => <span key={index} className="poster-skeleton" />)}
             </div>
-          </section>
-        ))
-      ) : results !== null ? (
-        results.length > 0 ? (
-          [
-            { key: 'movie' as const, labelKey: 'catalog.movies' },
-            { key: 'series' as const, labelKey: 'catalog.series' },
-          ].map(({ key, labelKey }) => {
-            const metas = results.filter((meta) => meta.type === key)
-            if (metas.length === 0) return null
-            return (
-              <motion.section
-                key={key}
-                className="catalog-row"
-                aria-label={t(labelKey)}
-                {...enter}
-                transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
-              >
-                <h2>{t(labelKey)}</h2>
-                <Carousel prevLabel={t('catalog.scrollBack')} nextLabel={t('catalog.scrollForward')}>
-                  {metas.map((meta) => (
-                    <PosterCard key={`${meta.type}:${meta.id}`} meta={meta} onOpen={onOpenTitle} />
-                  ))}
-                </Carousel>
-              </motion.section>
-            )
-          })
-        ) : (
-          <p className="empty-copy catalog-empty">{searching ? t('catalog.searching') : t('catalog.noResults')}</p>
-        )
+          ) : results.length > 0 ? (
+            <motion.div
+              key={query.trim()}
+              className={`search-grid ${searching ? 'is-stale' : ''}`}
+              {...enter}
+              transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}
+            >
+              {results.map((meta) => (
+                <PosterCard key={`${meta.type}:${meta.id}`} meta={meta} onOpen={onOpenTitle} />
+              ))}
+            </motion.div>
+          ) : (
+            <p className="empty-copy catalog-empty">{searching ? t('catalog.searching') : t('catalog.noResults')}</p>
+          )}
+        </section>
       ) : (
-        ROWS.map((row) => {
-          const state = rows[row.key] ?? { status: 'loading' as const }
-          return (
-            <section key={row.key} className="catalog-row" aria-label={t(row.labelKey)}>
-              <h2>{t(row.labelKey)}</h2>
-              {state.status === 'ready' ? (
-                <motion.div
-                  {...enter}
-                  transition={{ duration: 0.3, ease: [0.23, 1, 0.32, 1] }}
-                >
-                  <Carousel prevLabel={t('catalog.scrollBack')} nextLabel={t('catalog.scrollForward')}>
-                    {state.metas.map((meta) => (
-                      <PosterCard key={`${meta.type}:${meta.id}`} meta={meta} onOpen={onOpenTitle} />
-                    ))}
-                  </Carousel>
-                </motion.div>
-              ) : state.status === 'error' ? (
-                <p className="empty-copy catalog-empty">
-                  {t('catalog.rowFailed')}{' '}
-                  <button type="button" className="catalog-retry" onClick={() => setRetrySeq((seq) => seq + 1)}>
-                    {t('catalog.retry')}
-                  </button>
-                </p>
-              ) : (
-                <div className="catalog-strip" aria-hidden="true">
-                  {Array.from({ length: 8 }, (_, index) => <span key={index} className="poster-skeleton" />)}
-                </div>
-              )}
-            </section>
-          )
-        })
+        <>
+          {featured.length > 0 ? <FeaturedHero metas={featured} onOpen={onOpenTitle} /> : (
+            rows.movies?.status === 'error' ? null : <div className="featured-skeleton" aria-hidden="true" />
+          )}
+          {ROWS.map((row) => {
+            const state = rows[row.key] ?? { status: 'loading' as const }
+            return (
+              <section key={row.key} className="catalog-row" aria-label={t(row.labelKey)}>
+                <h2>{t(row.labelKey)}</h2>
+                {state.status === 'ready' ? (
+                  <motion.div
+                    {...enter}
+                    transition={{ duration: 0.3, ease: [0.23, 1, 0.32, 1] }}
+                  >
+                    <Carousel prevLabel={t('catalog.scrollBack')} nextLabel={t('catalog.scrollForward')}>
+                      {state.metas.map((meta) => (
+                        <PosterCard key={`${meta.type}:${meta.id}`} meta={meta} onOpen={onOpenTitle} />
+                      ))}
+                    </Carousel>
+                  </motion.div>
+                ) : state.status === 'error' ? (
+                  <p className="empty-copy catalog-empty">
+                    {t('catalog.rowFailed')}{' '}
+                    <button type="button" className="catalog-retry" onClick={() => setRetrySeq((seq) => seq + 1)}>
+                      {t('catalog.retry')}
+                    </button>
+                  </p>
+                ) : (
+                  <div className="catalog-strip" aria-hidden="true">
+                    {Array.from({ length: 8 }, (_, index) => <span key={index} className="poster-skeleton" />)}
+                  </div>
+                )}
+              </section>
+            )
+          })}
+        </>
       )}
     </div>
   )

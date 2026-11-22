@@ -40,7 +40,7 @@ describe('Home', () => {
   afterEach(() => vi.unstubAllGlobals())
 
   it('shows the catalog board on the other tab', async () => {
-    render(<MemoryRouter><Home /></MemoryRouter>)
+    render(<MemoryRouter initialEntries={['/open']}><Home /></MemoryRouter>)
     showCatalog()
     expect(await screen.findByRole('heading', { name: /popular movies|filmes populares/i })).toBeInTheDocument()
   })
@@ -68,8 +68,8 @@ describe('Home', () => {
     expect(await screen.findByRole('heading', { name: /workers/i })).toBeInTheDocument()
   })
 
-  it('opens on the manual tab and starts upload after file selection', async () => {
-    render(<MemoryRouter><Home /></MemoryRouter>)
+  it('opens the manual tab at /open and starts upload after file selection', async () => {
+    render(<MemoryRouter initialEntries={['/open']}><Home /></MemoryRouter>)
     expect(screen.getByRole('tab', { name: /^open$|^abrir$/i })).toHaveAttribute('aria-selected', 'true')
     await openFilePanel()
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
@@ -82,7 +82,7 @@ describe('Home', () => {
   })
 
   it('rejects a file over the limit without network work', async () => {
-    render(<MemoryRouter><Home /></MemoryRouter>)
+    render(<MemoryRouter initialEntries={['/open']}><Home /></MemoryRouter>)
     await openFilePanel()
     const file = new File(['x'], 'huge.mkv')
     Object.defineProperty(file, 'size', { value: MAX_UPLOAD_BYTES + 1 })
@@ -96,7 +96,7 @@ describe('Home', () => {
   // makes one up and the page never has to keep it.
   it('never asks for a name, and never keeps the one the server makes up', async () => {
     vi.mocked(createRoomAndUpload).mockResolvedValue({ roomID: 'room1234', nickname: 'Guest-abc123' })
-    render(<MemoryRouter><Home /></MemoryRouter>)
+    render(<MemoryRouter initialEntries={['/open']}><Home /></MemoryRouter>)
     await openFilePanel()
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     fireEvent.change(input, { target: { files: [new File(['video'], 'movie.mkv', { type: 'video/x-matroska' })] } })
@@ -113,7 +113,7 @@ describe('Home', () => {
       onProgress?.({ phase: 'converting', pct: 42 })
       return new Promise(() => undefined)
     })
-    render(<MemoryRouter><Home /></MemoryRouter>)
+    render(<MemoryRouter initialEntries={['/open']}><Home /></MemoryRouter>)
     await openFilePanel()
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     fireEvent.change(input, { target: { files: [new File(['video'], 'movie.mp4', { type: 'video/mp4' })] } })
@@ -128,9 +128,9 @@ describe('Home', () => {
 
   it('navigates to the room as soon as the upload starts in the background', async () => {
     render(
-      <MemoryRouter>
+      <MemoryRouter initialEntries={['/open']}>
         <Routes>
-          <Route path="/" element={<Home />} />
+          <Route path="/open" element={<Home />} />
           <Route path="/room/:id" element={<div>room page</div>} />
         </Routes>
       </MemoryRouter>,
@@ -156,7 +156,7 @@ describe('Home', () => {
       destroy,
     })
 
-    render(<MemoryRouter><Home /></MemoryRouter>)
+    render(<MemoryRouter initialEntries={['/open']}><Home /></MemoryRouter>)
     await openManual(/open torrent|abrir torrent/i)
     fireEvent.change(await screen.findByLabelText(/magnet link/i), { target: { value: 'magnet:?xt=urn:btih:test' } })
     fireEvent.click(screen.getByRole('button', { name: /find files|buscar arquivos/i }))
@@ -192,7 +192,7 @@ describe('Home', () => {
       select: vi.fn().mockResolvedValue(undefined), destroy: vi.fn(), detach,
     })
 
-    render(<MemoryRouter><Home /></MemoryRouter>)
+    render(<MemoryRouter initialEntries={['/open']}><Home /></MemoryRouter>)
     await openManual(/open torrent|abrir torrent/i)
     fireEvent.change(await screen.findByLabelText(/magnet link/i), { target: { value: 'magnet:?xt=urn:btih:' + 'ab'.repeat(20) } })
     fireEvent.click(screen.getByRole('button', { name: /find files|buscar arquivos/i }))
@@ -217,7 +217,7 @@ describe('Home', () => {
   // Um arquivo que ja e seu nao tem torrent para guardar, entao a pergunta nao
   // aparece e a tela volta a ter um botao so.
   it('does not offer the two modes for a file that is already yours', async () => {
-    render(<MemoryRouter><Home /></MemoryRouter>)
+    render(<MemoryRouter initialEntries={['/open']}><Home /></MemoryRouter>)
     await openFilePanel()
     const input = document.querySelector('input[type="file"]') as HTMLInputElement
     fireEvent.change(input, { target: { files: [new File(['video'], 'movie.mkv', { type: 'video/x-matroska' })] } })
@@ -230,7 +230,7 @@ describe('Home', () => {
 
 describe('build info', () => {
   it('links the running build back to its source and its commit', () => {
-    render(<MemoryRouter><Home /></MemoryRouter>)
+    render(<MemoryRouter initialEntries={['/open']}><Home /></MemoryRouter>)
 
     const repo = screen.getByRole('link', { name: /source on github|código no github/i })
     expect(repo).toHaveAttribute('href', 'https://github.com/giulianoo0/ss')
@@ -244,7 +244,7 @@ describe('the downloads tab', () => {
   // It used to appear only once there was something in it, which meant nobody
   // who had never downloaded anything could find out that they could.
   it('is there before anything has been downloaded', () => {
-    render(<MemoryRouter><Home /></MemoryRouter>)
+    render(<MemoryRouter initialEntries={['/open']}><Home /></MemoryRouter>)
 
     expect(screen.getByRole('tab', { name: /downloads|baixados/i })).toBeInTheDocument()
   })
@@ -253,7 +253,7 @@ describe('the downloads tab', () => {
     localStorage.setItem('ss.library', JSON.stringify([
       { roomId: 'r1', jobId: 'j1', fileName: 'Duna.mkv', title: 'Duna', savedAt: Date.now() },
     ]))
-    render(<MemoryRouter><Home /></MemoryRouter>)
+    render(<MemoryRouter initialEntries={['/open']}><Home /></MemoryRouter>)
 
     fireEvent.click(screen.getByRole('tab', { name: /downloads|baixados/i }))
 

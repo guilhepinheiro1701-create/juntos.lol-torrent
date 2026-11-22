@@ -120,16 +120,27 @@ export function Home() {
   const { toast } = useToast()
   const [onboarding, setOnboarding] = useState(() => !hasSeenOnboarding())
   const [manualOpen, setManualOpen] = useState<ManualStep>('menu')
+  // O catalogo e a porta de entrada, como em qualquer plataforma de streaming;
+  // abrir um arquivo ou magnet proprio mora em /open.
   const view: HomeView = location.pathname.startsWith('/status') ? 'status'
     : location.pathname.startsWith('/downloads') ? 'library'
-      : location.pathname.startsWith('/catalog') || location.pathname.startsWith('/title/') ? 'catalog'
-        : 'manual'
+      : location.pathname.startsWith('/open') ? 'manual'
+        : 'catalog'
 
   const showView = (next: HomeView) => {
     if (next === view) return
     window.scrollTo({ top: 0 })
-    navigate(next === 'manual' ? '/' : next === 'library' ? '/downloads' : `/${next}`, { state: null })
+    navigate(next === 'manual' ? '/open' : next === 'library' ? '/downloads' : next === 'catalog' ? '/' : `/${next}`, { state: null })
   }
+
+  // O cabecalho vira vidro (fosco) assim que o conteudo passa por baixo dele.
+  const [scrolled, setScrolled] = useState(false)
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 12)
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
+  }, [])
 
   const online = useOnline()
   // `isSecureContext` e falso em http fora de localhost, que e exatamente o
@@ -192,7 +203,7 @@ export function Home() {
   }, [navigate])
 
   const closeTitle = () => {
-    navigate('/catalog', { state: null })
+    navigate('/', { state: null })
   }
 
   const pickStream = (pick: TitlePick) => {
@@ -440,7 +451,7 @@ export function Home() {
 
   return (
     <main className="home-shell catalog-shell">
-      <header className="home-header">
+      <header className={`home-header ${scrolled ? 'is-scrolled' : ''}`}>
         <LayoutGroup id="jlocal">
         <ProgressiveBlur />
         <div className="header-start">

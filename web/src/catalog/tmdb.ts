@@ -22,6 +22,9 @@ export interface CatalogMeta {
   name: string
   poster: string
   releaseInfo: string
+  /** Paisagem do titulo, quando o catalogo manda — e o que o destaque do topo usa. */
+  background?: string
+  description?: string
 }
 
 export interface MetaVideo {
@@ -84,6 +87,8 @@ export function parseCatalogMetas(payload: unknown, fallbackType?: MetaType): Ca
       name: meta.name,
       poster: typeof meta.poster === 'string' ? meta.poster : '',
       releaseInfo: typeof meta.releaseInfo === 'string' ? meta.releaseInfo : '',
+      ...(typeof meta.background === 'string' && meta.background ? { background: meta.background } : {}),
+      ...(typeof meta.description === 'string' && meta.description ? { description: meta.description } : {}),
     })
   }
   return result
