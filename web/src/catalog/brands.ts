@@ -1,8 +1,13 @@
 import { searchByType, type CatalogMeta, type MetaType } from './tmdb'
+// Logotipos guardados no proprio site (nada e buscado fora para desenhar os
+// tiles). Origem: Wikimedia Commons; o da DC, do simple-icons. Conferidos:
+// sem script e sem referencia externa dentro dos SVGs.
+import marvelLogo from '../assets/brands/marvel.svg'
+import disneyLogo from '../assets/brands/disney.svg'
+import pixarLogo from '../assets/brands/pixar.svg'
+import starwarsLogo from '../assets/brands/starwars.svg'
 import dcLogo from '../assets/brands/dc.svg'
-
-/** Um arquivo do Wikimedia Commons pelo nome; o proprio Commons redireciona para a imagem. */
-const commons = (file: string) => `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(file.replace(/ /g, "_"))}`
+import wizardingLogo from '../assets/brands/wizarding.svg'
 
 /**
  * As colecoes por produtora (Marvel, Disney, Pixar...).
@@ -31,7 +36,7 @@ export interface Brand {
 export const BRANDS: Brand[] = [
   {
     key: 'marvel', name: 'Marvel', colors: ['#E62429', '#7A0A10'],
-    logos: [commons('Marvel Logo.svg'), commons('Marvel Studios 2016 logo.svg')],
+    logos: [marvelLogo],
     titles: [
       { title: 'Avengers: Endgame', year: '2019' }, { title: 'Avengers: Infinity War', year: '2018' },
       { title: 'Spider-Man: No Way Home', year: '2021' }, { title: 'Iron Man', year: '2008' },
@@ -45,7 +50,7 @@ export const BRANDS: Brand[] = [
   },
   {
     key: 'disney', name: 'Disney', colors: ['#1E4BD2', '#0B1A5C'],
-    logos: [commons('Disney wordmark.svg'), commons('Walt Disney Pictures logo.svg')], mono: true,
+    logos: [disneyLogo], mono: true,
     titles: [
       { title: 'Frozen', year: '2013' }, { title: 'Moana', year: '2016' }, { title: 'The Lion King', year: '1994' },
       { title: 'Encanto', year: '2021' }, { title: 'Zootopia', year: '2016' }, { title: 'Tangled', year: '2010' },
@@ -57,7 +62,7 @@ export const BRANDS: Brand[] = [
   },
   {
     key: 'pixar', name: 'Pixar', colors: ['#2FA8E0', '#0C3A5A'],
-    logos: [commons('Pixar logo.svg'), commons('Pixar Animation Studios logo.svg')], mono: true,
+    logos: [pixarLogo], mono: true,
     titles: [
       { title: 'Toy Story', year: '1995' }, { title: 'Finding Nemo', year: '2003' }, { title: 'Up', year: '2009' },
       { title: 'WALL·E', year: '2008' }, { title: 'Inside Out', year: '2015' }, { title: 'Coco', year: '2017' },
@@ -69,7 +74,7 @@ export const BRANDS: Brand[] = [
   },
   {
     key: 'starwars', name: 'Star Wars', colors: ['#E8C547', '#2A2410'],
-    logos: [commons('Star Wars Logo.svg'), commons('Star wars2.svg')],
+    logos: [starwarsLogo],
     titles: [
       { title: 'Star Wars', year: '1977' }, { title: 'The Empire Strikes Back', year: '1980' },
       { title: 'Return of the Jedi', year: '1983' }, { title: 'Star Wars: Episode I - The Phantom Menace', year: '1999' },
@@ -93,7 +98,7 @@ export const BRANDS: Brand[] = [
   },
   {
     key: 'wizarding', name: 'Harry Potter', colors: ['#B8892B', '#2B1C08'],
-    logos: [commons('Harry Potter wordmark.svg'), commons('Harry Potter logo.svg')], mono: true,
+    logos: [wizardingLogo], mono: true,
     titles: [
       { title: "Harry Potter and the Philosopher's Stone", year: '2001' },
       { title: 'Harry Potter and the Chamber of Secrets', year: '2002' },
