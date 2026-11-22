@@ -226,6 +226,7 @@ export const en: Record<string, string> = {
   'update.step1': 'On the computer running juntos.lol, double-click “Atualizar juntos.lol” on the Desktop (or atualizar.bat in its folder).',
   'update.step2': 'When it finishes, reload this page.',
   'update.history': 'See the full history on GitHub',
+  'home.slowSwarm': "This torrent's peers are slow to answer. Past a minute and a half it most likely has no seeds: cancel and pick another source.",
   'catalog.searching': 'Searching…',
   'catalog.noResults': 'Nothing found with that name.',
   'catalog.popularMovies': 'Popular movies',

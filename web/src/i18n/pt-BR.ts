@@ -226,6 +226,7 @@ export const ptBR: Record<string, string> = {
   'update.step1': 'No computador onde o juntos.lol roda, clique duas vezes em “Atualizar juntos.lol” na Área de Trabalho (ou em atualizar.bat, na pasta dele).',
   'update.step2': 'Quando ele terminar, recarregue esta página.',
   'update.history': 'Ver o histórico completo no GitHub',
+  'home.slowSwarm': 'Os peers deste torrent estão demorando a responder. Se passar de 1 minuto e meio, ele provavelmente está sem seeds: cancele e escolha outra fonte.',
   'catalog.searching': 'Buscando…',
   'catalog.noResults': 'Nada encontrado com esse nome.',
   'catalog.popularMovies': 'Filmes populares',

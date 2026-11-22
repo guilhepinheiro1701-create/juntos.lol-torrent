@@ -1358,3 +1358,7 @@ body::before { background: radial-gradient(120% 60% at 50% -10%, #1B1418 0%, #0E
 @media (min-width: 621px) { .home-header .header-tabs button { padding: 8px 17px; } }
 @media (min-width: 1600px) { .home-header .update-pill { right: max(clamp(16px, 4vw, 54px), calc((100% - 1640px) / 2)); } }
 @media (max-width: 620px) { .home-header .update-pill { top: 70px; right: 12px; } .home-header .update-pill .nav-label { display: inline; } }
+
+.starting-elapsed { color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.starting-hint { max-width: 34ch; margin: 10px auto 0; color: var(--text-dim); font-size: 12.5px; line-height: 1.5; text-align: center; }
+.starting-cancel { margin-top: 16px; padding: 9px 20px; border-radius: 999px; background: rgba(255,255,255,.07); border: 1px solid var(--glass-edge); color: var(--text); }

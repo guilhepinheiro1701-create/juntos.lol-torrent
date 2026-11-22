@@ -428,6 +428,12 @@ export interface OpenTorrentOptions {
   onProbe?: (probes: WorkerProbe[]) => void
   /** The label of a storage place the fleet published, or nothing for its default. */
   storage?: string
+  /** Desistir: o "Cancelar" da tela de preparo. Solta o torrent no worker. */
+  signal?: AbortSignal
+}
+
+function cancelled(): DOMException {
+  return new DOMException('cancelled', 'AbortError')
 }
 
 /**
@@ -452,6 +458,10 @@ export async function openRemoteTorrent(
     }),
   })
   const jobId = started.jobId
+  if (options?.signal?.aborted) {
+    void fetch(`/api/torrents/${encodeURIComponent(jobId)}`, { method: 'DELETE', keepalive: true }).catch(() => undefined)
+    throw cancelled()
+  }
   let statsTimer: ReturnType<typeof setInterval> | null = null
   let destroyed = false
   const destroy = () => {
@@ -470,9 +480,16 @@ export async function openRemoteTorrent(
       destroy()
       throw classify(502, status.error ?? 'failed', '')
     }
+    if (options?.signal?.aborted) {
+      destroy()
+      throw cancelled()
+    }
     if (Date.now() > deadline) {
       destroy()
-      throw new Error('torrent listing timed out')
+      // O mesmo que o worker diz quando desiste antes: ninguem no enxame
+      // mandou a lista de arquivos. Era um Error generico, que virava "falhou"
+      // sem dizer o que fazer.
+      throw new TorrentRejectedError('no_metadata')
     }
     await new Promise((resolve) => setTimeout(resolve, POLL_MS))
   }

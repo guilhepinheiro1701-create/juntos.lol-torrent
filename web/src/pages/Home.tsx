@@ -175,6 +175,19 @@ export function Home() {
   const [startingLabel, setStartingLabel] = useState('')
   const [youtubeDraft, setYoutubeDraft] = useState('')
   const [streamProbes, setStreamProbes] = useState<WorkerProbe[]>([])
+  // A tela de preparo precisa de saida: abrir um torrent sem seeds esperava
+  // ate 2 minutos e meio sem um botao, e parecia travado.
+  const startAbortRef = useRef<AbortController | null>(null)
+  const [startedAt, setStartedAt] = useState(0)
+  const [elapsed, setElapsed] = useState(0)
+  useEffect(() => {
+    if (!starting) { setElapsed(0); return }
+    const timer = window.setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000)
+    return () => window.clearInterval(timer)
+  }, [starting, startedAt])
+  const cancelStart = () => {
+    startAbortRef.current?.abort()
+  }
 
   const state = (location.state ?? {}) as TitleLocationState
   const detailsOpen: TitleOpen | null = isMetaType(params.type) && params.id
@@ -277,6 +290,9 @@ export function Home() {
     }
 
     setStarting(true)
+    setStartedAt(Date.now())
+    const abort = new AbortController()
+    startAbortRef.current = abort
     setStartingLabel(
       media.kind === 'stream' ? media.pick.displayName
           : media.kind === 'youtube' ? youtubeFileName(media.session)
@@ -318,7 +334,7 @@ export function Home() {
         closeTitle()
         setProgress({ phase: 'converting', pct: 0 })
         setStreamProbes([])
-        const opened = await openCatalogStream(media.pick.stream, media.pick.target, undefined, { onProbe: setStreamProbes })
+        const opened = await openCatalogStream(media.pick.stream, media.pick.target, undefined, { onProbe: setStreamProbes, signal: abort.signal })
         setProgress(null)
         try {
           room = await createRoomAndUploadTorrent(opened, '', setProgress)
@@ -342,6 +358,11 @@ export function Home() {
       navigate(`/room/${room.roomID}`)
     } catch (error) {
       discardPending(media)
+      if (abort.signal.aborted) {
+        setStarting(false)
+        setProgress(null)
+        return
+      }
       const message = t(
         isUnreadableFile(error) ? 'error.fileChanged'
           : isTorrentError(error) ? torrentErrorKey(error)
@@ -573,7 +594,10 @@ export function Home() {
                 {progress?.phase === 'converting' && progress.pct > 0
                   ? `${progress.pct}%`
                   : t('catalog.opening')}
+                {elapsed >= 3 ? <span className="starting-elapsed"> · {elapsed}s</span> : null}
               </p>
+              {elapsed >= 20 ? <p className="starting-hint">{t('home.slowSwarm')}</p> : null}
+              <button type="button" className="starting-cancel" onClick={cancelStart}>{t('home.cancel')}</button>
             </motion.div>
           </motion.div>
         ) : null}
