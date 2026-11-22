@@ -1,11 +1,13 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
-import { LoaderCircle, Search, X } from 'lucide-react'
+import { ArrowLeft, LoaderCircle, Search, X } from 'lucide-react'
 import { useT } from '../i18n/useT'
 import { fetchCatalog, searchCatalog, type CatalogMeta, type MetaType } from './tmdb'
 import { PosterCard, type TitleOpen } from './PosterCard'
 import { Carousel } from './Carousel'
 import { FeaturedHero } from './FeaturedHero'
+import { BrandTiles } from './BrandTiles'
+import { fetchBrand, type Brand } from './brands'
 import { prefetchMetaDetails } from './lazyDetails'
 
 // Curto o bastante para parecer instantaneo enquanto se digita, longo o
@@ -190,6 +192,24 @@ export const CatalogBrowser = memo(function CatalogBrowser({ onOpenTitle, compac
   }, [query, flushSeq])
 
   const typing = query.trim() !== ''
+
+  // A colecao de uma produtora aberta pelos tiles; null e o catalogo normal.
+  const [brand, setBrand] = useState<Brand | null>(null)
+  const [brandMetas, setBrandMetas] = useState<CatalogMeta[] | 'loading' | 'error'>('loading')
+  const [brandRetry, setBrandRetry] = useState(0)
+  useEffect(() => {
+    if (!brand) return
+    let cancelled = false
+    setBrandMetas('loading')
+    fetchBrand(brand)
+      .then((metas) => { if (!cancelled) setBrandMetas(metas) })
+      .catch(() => { if (!cancelled) setBrandMetas('error') })
+    return () => { cancelled = true }
+  }, [brand, brandRetry])
+  const openBrand = (next: Brand) => {
+    scrollBoardToTop(rootRef.current)
+    setBrand(next)
+  }
   const featured = useMemo(() => pickFeatured(rows), [rows])
 
   const enter = reduceMotion
@@ -289,11 +309,42 @@ export const CatalogBrowser = memo(function CatalogBrowser({ onOpenTitle, compac
             <p className="empty-copy catalog-empty">{searching ? t('catalog.searching') : t('catalog.noResults')}</p>
           )}
         </section>
+      ) : brand ? (
+        <section className="search-results brand-view" aria-label={brand.name} aria-busy={brandMetas === 'loading'}>
+          <header className="search-results-head">
+            <button type="button" className="brand-back" onClick={() => setBrand(null)} aria-label={t('catalog.back')}>
+              <ArrowLeft size={18} aria-hidden="true" />
+            </button>
+            <h2>{brand.name}</h2>
+            {Array.isArray(brandMetas) ? (
+              <span>{t('catalog.resultsCount').replace('{count}', String(brandMetas.length))}</span>
+            ) : null}
+          </header>
+          {brandMetas === 'loading' ? (
+            <div className="search-grid" aria-hidden="true">
+              {Array.from({ length: 12 }, (_, index) => <span key={index} className="poster-skeleton" />)}
+            </div>
+          ) : brandMetas === 'error' ? (
+            <p className="empty-copy catalog-empty">
+              {t('catalog.rowFailed')}{' '}
+              <button type="button" className="catalog-retry" onClick={() => setBrandRetry((seq) => seq + 1)}>
+                {t('catalog.retry')}
+              </button>
+            </p>
+          ) : (
+            <motion.div className="search-grid" {...enter} transition={{ duration: 0.25, ease: [0.23, 1, 0.32, 1] }}>
+              {brandMetas.map((meta) => (
+                <PosterCard key={`${meta.type}:${meta.id}`} meta={meta} onOpen={onOpenTitle} />
+              ))}
+            </motion.div>
+          )}
+        </section>
       ) : (
         <>
           {featured.length > 0 ? <FeaturedHero metas={featured} onOpen={onOpenTitle} /> : (
             rows.movies?.status === 'error' ? null : <div className="featured-skeleton" aria-hidden="true" />
           )}
+          <BrandTiles label={t('catalog.studios')} onPick={openBrand} />
           {ROWS.map((row) => {
             const state = rows[row.key] ?? { status: 'loading' as const }
             return (

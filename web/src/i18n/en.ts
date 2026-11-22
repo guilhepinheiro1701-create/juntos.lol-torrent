@@ -196,6 +196,8 @@ export const en: Record<string, string> = {
   'catalog.watch': 'Watch',
   'catalog.resultsFor': 'Results for “{query}”',
   'catalog.resultsCount': '{count} titles',
+  'catalog.studios': 'Studios',
+  'catalog.back': 'Back',
   'catalog.searching': 'Searching…',
   'catalog.noResults': 'Nothing found with that name.',
   'catalog.popularMovies': 'Popular movies',

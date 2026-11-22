@@ -196,6 +196,8 @@ export const ptBR: Record<string, string> = {
   'catalog.watch': 'Assistir',
   'catalog.resultsFor': 'Resultados para “{query}”',
   'catalog.resultsCount': '{count} títulos',
+  'catalog.studios': 'Produtoras',
+  'catalog.back': 'Voltar',
   'catalog.searching': 'Buscando…',
   'catalog.noResults': 'Nada encontrado com esse nome.',
   'catalog.popularMovies': 'Filmes populares',

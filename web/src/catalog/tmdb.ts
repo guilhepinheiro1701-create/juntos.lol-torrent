@@ -188,3 +188,11 @@ export async function searchCatalog(query: string): Promise<CatalogMeta[]> {
   }
   return merged
 }
+
+/** Uma busca de um tipo so; e o que as colecoes por produtora usam para achar cada titulo. */
+export async function searchByType(type: MetaType, query: string): Promise<CatalogMeta[]> {
+  const trimmed = query.trim()
+  if (!trimmed) return []
+  const payload = await getJSON<unknown>(`${metadataBase()}/catalog/${type}/tmdb.search/search=${encodeURIComponent(trimmed)}.json`)
+  return parseCatalogMetas(payload, type)
+}

@@ -1210,6 +1210,28 @@ body::before { background: radial-gradient(120% 60% at 50% -10%, #1B1418 0%, #0E
 .poster-card:focus-visible .poster-glow { opacity: .95; transform: translateY(6px) scale(1.06); }
 .poster-play { background: rgba(255,255,255,.18); color: #fff; border: 1px solid rgba(255,255,255,.35); backdrop-filter: blur(12px) saturate(160%); -webkit-backdrop-filter: blur(12px) saturate(160%); }
 
+/* ---------- Produtoras ---------- */
+.brand-tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; margin: -12px 0 44px; }
+.brand-tile { position: relative; isolation: isolate; display: grid; place-items: center; aspect-ratio: 16 / 9; padding: 0; overflow: visible; border: 1px solid rgba(255,255,255,.12); border-radius: 16px; background: radial-gradient(120% 140% at 50% 0%, color-mix(in srgb, var(--brand-a) 55%, transparent), transparent 70%), linear-gradient(160deg, var(--brand-b), #0B0A0E 85%); box-shadow: var(--glass-shine), 0 12px 30px rgba(0,0,0,.4); transition: transform 240ms var(--ease), border-color 240ms var(--ease), box-shadow 240ms var(--ease); }
+.brand-tile::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,0) 45%); pointer-events: none; }
+.brand-tile-glow { position: absolute; inset: 10% 8%; z-index: -1; border-radius: 20px; background: var(--brand-a); filter: blur(28px); opacity: 0; transform: scale(.85); transition: opacity 260ms var(--ease), transform 260ms var(--ease); pointer-events: none; }
+.brand-tile-name { position: relative; font-size: clamp(15px, 1.7vw, 24px); font-weight: 850; letter-spacing: -.03em; color: #fff; text-shadow: 0 2px 14px rgba(0,0,0,.45); white-space: nowrap; }
+.brand-tile--marvel .brand-tile-name { padding: 2px 10px; background: #E62429; border-radius: 3px; letter-spacing: -.02em; text-transform: uppercase; text-shadow: none; }
+.brand-tile--disney .brand-tile-name { font-family: Georgia, "Times New Roman", serif; font-style: italic; font-weight: 700; letter-spacing: 0; }
+.brand-tile--starwars .brand-tile-name { color: #E8C547; text-transform: uppercase; letter-spacing: .06em; font-weight: 900; }
+.brand-tile--dc .brand-tile-name { font-size: clamp(18px, 2.2vw, 30px); font-weight: 900; letter-spacing: .02em; }
+.brand-tile--wizarding .brand-tile-name { font-family: Georgia, "Times New Roman", serif; color: #F1D9A0; font-weight: 700; letter-spacing: .01em; }
+.brand-tile:hover:not(:disabled), .brand-tile:focus-visible { transform: translateY(-4px) scale(1.04); border-color: color-mix(in srgb, var(--brand-a) 60%, white); box-shadow: var(--glass-shine), 0 18px 40px rgba(0,0,0,.5); outline: none; }
+.brand-tile:hover .brand-tile-glow, .brand-tile:focus-visible .brand-tile-glow { opacity: .75; transform: translateY(10px) scale(1.05); }
+.brand-tile-logo { position: absolute; inset: 0; margin: auto; width: 62%; height: 46%; object-fit: contain; filter: drop-shadow(0 4px 14px rgba(0,0,0,.45)); transition: transform 240ms var(--ease); }
+.brand-tile-logo.is-mono { filter: brightness(0) invert(1) drop-shadow(0 4px 14px rgba(0,0,0,.45)); }
+.brand-tile--dc .brand-tile-logo { height: 52%; }
+.brand-tile:hover .brand-tile-logo, .brand-tile:focus-visible .brand-tile-logo { transform: scale(1.06); }
+.brand-back { display: grid; place-items: center; align-self: center; width: 38px; height: 38px; padding: 0; border-radius: 50%; background: rgba(255,255,255,.07); border: 1px solid var(--glass-edge); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); }
+@media (max-width: 900px) { .brand-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 620px) { .brand-tiles { gap: 10px; margin: -8px 0 32px; } .brand-tile { border-radius: 12px; } .brand-tile-name { font-size: 13px; } .brand-tile--dc .brand-tile-name { font-size: 17px; } }
+@media (prefers-reduced-motion: reduce) { .brand-tile, .brand-tile-glow { transition: none; } }
+
 /* ---------- Busca ---------- */
 .catalog-search { background: var(--glass-fill); border: 1px solid var(--glass-edge); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); box-shadow: var(--glass-shine), 0 18px 50px rgba(0,0,0,.45); transition: box-shadow 200ms var(--ease), border-color 200ms var(--ease); }
 .catalog-search:focus-within { border-color: rgba(255,122,69,.45); box-shadow: var(--glass-shine), 0 18px 50px rgba(0,0,0,.45), 0 0 40px rgba(255,122,69,.20); }
