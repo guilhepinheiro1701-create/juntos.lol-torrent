@@ -430,6 +430,8 @@ export interface OpenTorrentOptions {
   storage?: string
   /** Desistir: o "Cancelar" da tela de preparo. Solta o torrent no worker. */
   signal?: AbortSignal
+  /** Quanto esperar pela lista de arquivos. Menor quando ha outra fonte na fila. */
+  listingTimeoutMs?: number
 }
 
 function cancelled(): DOMException {
@@ -471,7 +473,7 @@ export async function openRemoteTorrent(
     void fetch(`/api/torrents/${encodeURIComponent(jobId)}`, { method: 'DELETE', keepalive: true }).catch(() => undefined)
   }
 
-  const deadline = Date.now() + LISTING_TIMEOUT_MS
+  const deadline = Date.now() + (options?.listingTimeoutMs ?? LISTING_TIMEOUT_MS)
   let status: JobStatus
   while (true) {
     status = await api<JobStatus>(`/${encodeURIComponent(jobId)}`)

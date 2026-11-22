@@ -7,6 +7,7 @@ import { useT } from '../i18n/useT'
 import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl, createRoomAndUploadYoutube, isUnreadableFile, youtubeFileName, type UploadProgress } from '../upload'
 import { BuildInfo } from '../components/BuildInfo'
 import { UpdateNotice } from '../components/UpdateNotice'
+import { SettingsButton } from '../components/SettingsPanel'
 import { LibraryShelf } from '../components/LibraryShelf'
 import { StoragePicker } from '../components/StoragePicker'
 import { OfflineNotice } from '../components/OfflineNotice'
@@ -42,6 +43,8 @@ import { buildMagnet } from '../catalog/streams'
 import { queueDownload } from '../queue'
 import { isFinished, rememberStart, type RecentEntry } from '../recents'
 import { RecentShelf, useRecents } from '../components/RecentShelf'
+import { useSourceMode } from '../settings'
+import { loadingProgress, type StartStage } from '../startProgress'
 import type { CatalogMeta, MetaType } from '../catalog/tmdb'
 import type { TitleOpen } from '../catalog/PosterCard'
 
@@ -66,7 +69,7 @@ type PendingMedia =
   | { kind: 'torrent'; file: TorrentVideoFile; session: TorrentSession }
   | { kind: 'youtube'; session: YoutubeSession }
   | { kind: 'drive'; file: TorrentVideoFile; session: TorrentSession }
-  | { kind: 'stream'; pick: TitlePick; resumeAtMs?: number }
+  | { kind: 'stream'; pick: TitlePick; resumeAtMs?: number; alternatives?: TitlePick[] }
 
 /**
  * Se ha um torrent por tras, e portanto algo que o worker possa guardar.
@@ -179,6 +182,9 @@ export function Home() {
   // ate 2 minutos e meio sem um botao, e parecia travado.
   const startAbortRef = useRef<AbortController | null>(null)
   const [startedAt, setStartedAt] = useState(0)
+  const [startStage, setStartStage] = useState<StartStage>('search')
+  const [stageAt, setStageAt] = useState(0)
+  const sourceMode = useSourceMode()
   const [elapsed, setElapsed] = useState(0)
   useEffect(() => {
     if (!starting) { setElapsed(0); return }
@@ -233,9 +239,14 @@ export function Home() {
    * de onde guardar — quem ja escolheu uma vez nao precisa escolher de novo.
    * `fromStartMs` 0 comeca do inicio (assistir de novo, ou o proximo episodio).
    */
-  const playDirect = (pick: TitlePick, resumeAtMs: number) => {
+  const playDirect = (pick: TitlePick, resumeAtMs: number, alternatives?: TitlePick[]) => {
     setError('')
-    void startUpload(false, { kind: 'stream', pick, resumeAtMs })
+    void startUpload(false, { kind: 'stream', pick, resumeAtMs, alternatives })
+  }
+  /** Modo basico: "baixar para offline" sem dialogo; vai para a fila de Baixados. */
+  const downloadDirect = (pick: TitlePick) => {
+    setError('')
+    void startUpload(true, { kind: 'stream', pick })
   }
   const recents = useRecents()
   const resumeRecent = (entry: RecentEntry) => playDirect(entry.pick, isFinished(entry) ? 0 : entry.positionMs)
@@ -291,6 +302,9 @@ export function Home() {
 
     setStarting(true)
     setStartedAt(Date.now())
+    setStageAt(Date.now())
+    setStartStage('search')
+    let usedPick: TitlePick = media.kind === 'stream' ? media.pick : (null as unknown as TitlePick)
     const abort = new AbortController()
     startAbortRef.current = abort
     setStartingLabel(
@@ -334,7 +348,30 @@ export function Home() {
         closeTitle()
         setProgress({ phase: 'converting', pct: 0 })
         setStreamProbes([])
-        const opened = await openCatalogStream(media.pick.stream, media.pick.target, undefined, { onProbe: setStreamProbes, signal: abort.signal })
+        setStartStage('search')
+        // Modo basico: a melhor fonte primeiro e, se o enxame dela nao
+        // responder, a seguinte, sozinho. Com plano B na fila, cada tentativa
+        // espera menos — o que custa e ficar 2 minutos num torrent morto.
+        const attempts = [media.pick, ...(media.alternatives ?? [])]
+        let opened: Awaited<ReturnType<typeof openCatalogStream>> | null = null
+        for (let index = 0; index < attempts.length && !opened; index += 1) {
+          const attempt = attempts[index]
+          const last = index === attempts.length - 1
+          try {
+            if (index > 0) { setStartStage('retry'); setStageAt(Date.now()) }
+            opened = await openCatalogStream(attempt.stream, attempt.target, undefined, {
+              onProbe: (probes) => { setStreamProbes(probes); setStartStage((stage) => (stage === 'search' ? 'connect' : stage)); setStageAt(Date.now()) },
+              signal: abort.signal,
+              ...(last ? {} : { listingTimeoutMs: 45_000 }),
+            })
+            usedPick = attempt
+          } catch (error) {
+            if (last || abort.signal.aborted || !isTorrentError(error)) throw error
+          }
+        }
+        if (!opened) throw new Error('no source opened')
+        setStartStage('open')
+        setStageAt(Date.now())
         setProgress(null)
         try {
           room = await createRoomAndUploadTorrent(opened, '', setProgress)
@@ -342,13 +379,13 @@ export function Home() {
           opened.session.destroy()
           throw error
         }
-        fileName = media.pick.displayName
-        const playing = nowPlayingFromPick(media.pick)
+        fileName = usedPick.displayName
+        const playing = nowPlayingFromPick(usedPick)
         try {
           if (playing) localStorage.setItem(nowPlayingKey(room.roomID), JSON.stringify(playing))
         } catch {}
       }
-      if (media.kind === 'stream') rememberStart(room.roomID, media.pick, media.resumeAtMs ?? 0)
+      if (media.kind === 'stream') rememberStart(room.roomID, usedPick, media.resumeAtMs ?? 0)
       const nextHistory = [
         { id: room.roomID, fileName, createdAt: Date.now() },
         ...history.filter((entry) => entry.id !== room.roomID),
@@ -536,6 +573,7 @@ export function Home() {
           <UpdateNotice t={t} />
           <BuildInfo label={t('home.source')} />
           <DiscordLink label={t('home.discord')} />
+          <SettingsButton t={t} />
           <button type="button" className="header-plugins" onClick={() => setPluginsOpen(true)}>
             <Puzzle size={15} aria-hidden="true" /><span className="nav-label">{t('plugins.open')}</span>
           </button>
@@ -580,6 +618,29 @@ export function Home() {
             role="status"
             aria-live="polite"
           >
+            {sourceMode === 'basic' ? (() => {
+              const { pct, etaSeconds } = loadingProgress(startStage, (Date.now() - stageAt) / 1000)
+              return (
+                <motion.div
+                  className="starting-card starting-simple"
+                  initial={{ opacity: 0, transform: 'translateY(14px)' }}
+                  animate={{ opacity: 1, transform: 'translateY(0px)' }}
+                  transition={{ duration: 0.35, delay: 0.15, ease: [0.23, 1, 0.32, 1] }}
+                >
+                  <h2>{t('basic.loading')}</h2>
+                  <p className="starting-file">{startingLabel}</p>
+                  <div className="simple-bar" role="progressbar" aria-label={t('basic.loading')} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
+                    <span style={{ width: `${pct}%` }} />
+                  </div>
+                  <div className="simple-meta">
+                    <span>{pct}%</span>
+                    <span>{etaSeconds !== null ? t('basic.eta').replace('{s}', String(etaSeconds)) : t('basic.etaLonger')}</span>
+                  </div>
+                  {startStage === 'retry' ? <p className="starting-hint">{t('basic.retrying')}</p> : null}
+                  <button type="button" className="starting-cancel" onClick={cancelStart}>{t('home.cancel')}</button>
+                </motion.div>
+              )
+            })() : (
             <motion.div
               className="starting-card"
               initial={{ opacity: 0, transform: 'translateY(14px)' }}
@@ -599,6 +660,7 @@ export function Home() {
               {elapsed >= 20 ? <p className="starting-hint">{t('home.slowSwarm')}</p> : null}
               <button type="button" className="starting-cancel" onClick={cancelStart}>{t('home.cancel')}</button>
             </motion.div>
+            )}
           </motion.div>
         ) : null}
       </AnimatePresence>
@@ -613,6 +675,7 @@ export function Home() {
             onClose={closeTitle}
             onPickStream={pickStream}
             onPlayDirect={playDirect}
+            onDownloadDirect={downloadDirect}
           />
         </Suspense>
       ) : null}

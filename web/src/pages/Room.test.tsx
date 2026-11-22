@@ -53,6 +53,7 @@ describe('RoomPage opening', () => {
 
   // A name existed so the other people in the room knew who had arrived.
   it('opens straight into the room, without asking for a name', async () => {
+    localStorage.setItem('ss.source-mode', 'advanced')
     renderRoom()
 
     // The room is still preparing, so what should be on screen is the preparo

@@ -109,6 +109,8 @@ describe('Home', () => {
   })
 
   it('shows a preparing state while an mp4 is being converted', async () => {
+    // A tela detalhada e a do modo avancado; o basico tem o proprio teste.
+    localStorage.setItem('ss.source-mode', 'advanced')
     vi.mocked(createRoomAndUpload).mockImplementation(async (_file, _nick, onProgress) => {
       onProgress?.({ phase: 'converting', pct: 42 })
       return new Promise(() => undefined)

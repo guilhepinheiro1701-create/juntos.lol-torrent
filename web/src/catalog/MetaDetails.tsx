@@ -15,6 +15,8 @@ import { resolveStreams } from '../plugins/resolve'
 import type { TitleOpen } from './PosterCard'
 import { Badge } from '@/components/ui/badge'
 import { ContinueCard, episodePick, sameSource } from './ContinueCard'
+import { BasicPicker } from './BasicPicker'
+import { useSourceMode } from '../settings'
 import { recentFor, subscribeRecents, type RecentEntry } from '../recents'
 
 const CARD_RADIUS = '14px'
@@ -40,7 +42,9 @@ interface MetaDetailsProps {
   onClose: () => void
   onPickStream: (pick: TitlePick) => void
   /** Comeca sem passar pelo dialogo ("Continuar"); sem ele, cai no onPickStream. */
-  onPlayDirect?: (pick: TitlePick, resumeAtMs: number) => void
+  onPlayDirect?: (pick: TitlePick, resumeAtMs: number, alternatives?: TitlePick[]) => void
+  /** Modo basico: "baixar para offline" direto, sem dialogo. */
+  onDownloadDirect?: (pick: TitlePick) => void
   onOpenPlugins?: () => void
 }
 
@@ -72,7 +76,8 @@ function SourcesEmpty({ icon, title, hint, action }: {
 // O painel nasce do pôster clicado (FLIP) e só revela o conteúdo quando o morph
 // pousa; sem rect de origem ele entra com fade, e fechar é sempre fade. No
 // celular é uma folha que sobe do rodapé e desce por ali, sem morph.
-export function MetaDetails({ open, mode, focus, onClose, onPickStream, onPlayDirect, onOpenPlugins }: MetaDetailsProps) {
+export function MetaDetails({ open, mode, focus, onClose, onPickStream, onPlayDirect, onDownloadDirect, onOpenPlugins }: MetaDetailsProps) {
+  const sourceMode = useSourceMode()
   const t = useT()
   const reduceMotion = useReducedMotion()
   const flatReveal = reduceMotion || isGecko
@@ -102,10 +107,20 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onPlayDi
     read()
     return subscribeRecents(read)
   }, [meta.id, meta.type, detail?.imdbId])
-  const playDirect = (pick: TitlePick, resumeAtMs: number) => {
-    if (onPlayDirect) onPlayDirect(pick, resumeAtMs)
+  const playDirect = (pick: TitlePick, resumeAtMs: number, alternatives?: TitlePick[]) => {
+    if (onPlayDirect) onPlayDirect(pick, resumeAtMs, alternatives)
     else onPickStream(pick)
   }
+  const makePick = (stream: CatalogStream, at: StreamTarget): TitlePick => ({
+    stream,
+    target: at,
+    displayName: selected
+      ? `${meta.name} S${String(selected.season).padStart(2, '0')}E${String(selected.episode).padStart(2, '0')}`
+      : meta.name,
+    metaName: detail?.name ?? meta.name,
+    poster: detail?.poster || meta.poster,
+    catalog: { id: meta.id, type: meta.type, background: detail?.background || meta.background },
+  })
   // Numa serie com historico, a fonte que tocou antes vira um atalho em cada
   // episodio: um clique e toca, sem garimpar a lista de novo.
   const remembered = recent && meta.type === 'series' && streams ? sameSource(streams, recent.pick.stream) : null
@@ -446,7 +461,7 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onPlayDi
               ) : null}
               <div className="details-streams-head">
                 <h3>{t('details.sources')}</h3>
-                {streams && streams.length > 0 ? (
+                {streams && streams.length > 0 && sourceMode === 'advanced' ? (
                   <div className="stream-filters">
                     <Dropdown
                       label={t('details.quality')}
@@ -519,6 +534,16 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onPlayDi
                   title={t('details.noPluginResolved')}
                   hint={t('details.noPluginResolvedHint')}
                   action={{ label: t('details.openPlugins'), onClick: () => onOpenPlugins?.() }}
+                />
+              ) : sourceMode === 'basic' ? (
+                <BasicPicker
+                  streams={streams}
+                  t={t}
+                  onWatch={(ranked) => {
+                    const picks = ranked.slice(0, 4).map((stream) => makePick(stream, target))
+                    playDirect(picks[0], 0, picks.slice(1))
+                  }}
+                  onDownload={onDownloadDirect ? (best) => onDownloadDirect(makePick(best, target)) : undefined}
                 />
               ) : visibleStreams.length === 0 ? (
                 <SourcesEmpty

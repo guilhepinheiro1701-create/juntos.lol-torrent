@@ -100,12 +100,15 @@ export function UploadAvailability({
   swarm,
   wait,
   t,
+  simple = false,
 }: {
   progress: RoomUploadProgress | null
   preparation?: RoomPreparation | null
   swarm?: TorrentStats | null
   wait?: OpeningWait | null
   t: Translator
+  /** Modo basico: titulo, barra e tempo; sem fase, sem peers, sem velocidade. */
+  simple?: boolean
 }) {
   const received = preparation?.receivedBytes ?? progress?.bytesUploaded ?? 0
   const total = preparation?.sourceBytes ?? progress?.bytesTotal ?? 0
@@ -154,14 +157,14 @@ export function UploadAvailability({
 
   return (
     <div className="availability-card">
-      <h1>{t('room.processing')}</h1>
-      <p>
+      <h1>{simple ? t('basic.loading') : t('room.processing')}</h1>
+      {simple ? null : <p>
         <SlotText k={stageKey} block>
           {!buffering ? label : wait.cold ? t('room.preparingPart') : (
             <span className="text-shimmer">{t('room.bufferingLead')}</span>
           )}
         </SlotText>
-      </p>
+      </p>}
       <div className="availability-meter">
         <div
           className={`prep-bar ${shownPct > 0 ? 'is-progress' : 'is-indeterminate'}`}
@@ -183,7 +186,7 @@ export function UploadAvailability({
             : <strong>{etaLabel}</strong>}
         </div>
       </div>
-      {swarm ? <TorrentReadout stats={swarm} /> : null}
+      {swarm && !simple ? <TorrentReadout stats={swarm} /> : null}
     </div>
   )
 }

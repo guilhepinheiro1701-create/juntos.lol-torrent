@@ -27,6 +27,7 @@ import type { TitlePick } from '../catalog/MetaDetails'
 import { NextEpisodeCard } from '../catalog/NextEpisode'
 import { nowPlayingFromPick, nowPlayingKey, useNextEpisode, type NowPlaying } from '../catalog/useNextEpisode'
 import { notePosition, rememberStart, takeResumeAt } from '../recents'
+import { useSourceMode } from '../settings'
 import { TorrentPicker } from '../components/TorrentPicker'
 import { YoutubePicker } from '../components/YoutubePicker'
 import { YoutubeError, isYoutubeError, openYoutube, youtubeErrorKey, youtubeErrorRetryable, type YoutubeSession } from '../youtube'
@@ -116,6 +117,7 @@ function RoomGate({ step, room, progress, preparation, swarm, wait, overlay = fa
   errorMessage?: string
 }) {
   const t = useT()
+  const sourceMode = useSourceMode()
   const { shown, morphing } = useMorphingStep(step)
   return (
     <main className={`center-state${overlay ? ' gate-overlay' : ''}${leaving ? ' is-leaving' : ''}`}>
@@ -128,7 +130,7 @@ function RoomGate({ step, room, progress, preparation, swarm, wait, overlay = fa
         ) : null}
 
         {shown === 'preparing' || shown === 'buffering' ? (
-          <UploadAvailability progress={progress ?? null} preparation={preparation} swarm={swarm} wait={shown === 'buffering' ? wait ?? { secondsLeft: null, cold: false } : null} t={t} />
+          <UploadAvailability progress={progress ?? null} preparation={preparation} swarm={swarm} wait={shown === 'buffering' ? wait ?? { secondsLeft: null, cold: false } : null} t={t} simple={sourceMode === 'basic'} />
         ) : null}
 
         {shown === 'expired' ? (
