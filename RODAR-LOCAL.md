@@ -36,6 +36,14 @@ recentes e o `.env.local` não são tocados.
 Quando existe versão nova, o próprio site avisa: aparece **Atualização
 disponível** no topo, com a lista do que mudou.
 
+## Algo não funciona?
+
+Clique duas vezes em **`diagnostico.bat`** na pasta do juntos.lol. Ele só lê
+(não muda nada): junta versão, containers, espaço em disco e os logs do
+servidor e do baixador num arquivo `diagnostico-juntos.txt` na Área de
+Trabalho, com senhas e chaves mascaradas, e abre no Bloco de Notas. É esse
+arquivo que mostra o motivo de um filme não abrir.
+
 ## Windows, passo a passo
 
 **1. Instale o Docker Desktop.**

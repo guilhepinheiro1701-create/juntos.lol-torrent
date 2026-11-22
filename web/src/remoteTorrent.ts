@@ -152,7 +152,8 @@ function classify(status: number, code: string, reason: string): Error {
   if (code === 'no_workers') return new NoWorkersError()
   if (code === 'workers_busy' || code === 'worker_gone') return new WorkersBusyError()
   if (status === 429) return new TorrentQuotaError(reason || code || 'rate_limited')
-  if (code === 'blocked' || code === 'not_video' || code === 'no_metadata' || code === 'invalid_infohash') {
+  if (code === 'blocked' || code === 'not_video' || code === 'no_metadata' || code === 'invalid_infohash'
+    || code === 'worker_timeout' || code === 'too_many_torrents' || code === 'too_many_leases' || code === 'disk_full') {
     return new TorrentRejectedError(code)
   }
   return new Error(`torrent api ${code || status}`)

@@ -19,6 +19,11 @@ export function torrentErrorKey(error: unknown): string {
   if (error instanceof TorrentRejectedError) {
     if (error.code === 'not_video') return 'home.torrentNotVideo'
     if (error.code === 'no_metadata') return 'home.torrentNoSeeds'
+    // O worker nao respondeu ao pedido (nem com erro): o problema esta nele,
+    // nao no torrent. So os logs dele dizem por que.
+    if (error.code === 'worker_timeout') return 'home.torrentWorkerSilent'
+    if (error.code === 'too_many_torrents' || error.code === 'too_many_leases') return 'home.torrentTooMany'
+    if (error.code === 'disk_full') return 'home.torrentDiskFull'
     return 'home.torrentRejected'
   }
   return 'home.torrentFailed'

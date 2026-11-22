@@ -186,8 +186,14 @@ func (s *Service) Start(ctx context.Context, sessionID, infohash, name, storage 
 	return job, nil
 }
 
+// leaseWait is how long a lease may take before the job fails as
+// worker_timeout. Above the worker's own 90 s metadata limit, so a torrent with
+// no seeds still fails as no_metadata, and below the page's 150 s, so the page
+// always hears the real reason instead of giving up first and guessing.
+const leaseWait = 110 * time.Second
+
 func (s *Service) resolve(job JobRecord, trackers []string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), leaseWait)
 	defer cancel()
 	result, err := s.Hub.Dispatch(ctx, Job{
 		Kind:     "lease",
@@ -197,7 +203,7 @@ func (s *Service) resolve(job JobRecord, trackers []string) {
 		LeaseID:  job.LeaseID,
 		Trackers: trackers,
 		Storage:  job.Storage,
-	}, 3*time.Minute)
+	}, leaseWait)
 	current, loadErr := s.Registry.LoadJob(ctx, job.ID)
 	if loadErr != nil || current == nil {
 		return
