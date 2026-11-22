@@ -54,6 +54,8 @@ echo
 say "[..] Montando as imagens. A primeira vez demora bastante: compila o"
 say "     servidor em Go, o worker em Rust e o site."
 echo
+# O commit desta instalacao vai para dentro do site (aviso de versao nova).
+export GIT_SHA="$(git rev-parse HEAD 2>/dev/null || head -n1 .versao 2>/dev/null || echo local)"
 docker compose --env-file .env.local build
 
 echo

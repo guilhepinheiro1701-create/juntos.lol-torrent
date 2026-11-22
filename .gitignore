@@ -44,3 +44,6 @@ target/
 
 # Despejo do Redis, se alguem rodar um redis-server dentro da pasta.
 dump.rdb
+
+# Versao instalada sem git (escrita pelo instalar/atualizar)
+/.versao

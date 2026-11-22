@@ -27,7 +27,9 @@ services:
     build:
       context: .
       args:
-        GIT_SHA: local
+        # O commit desta instalacao, para o site saber se ha versao nova.
+        # O start e o atualizar preenchem; sem eles, fica "local".
+        GIT_SHA: ${GIT_SHA:-local}
     restart: unless-stopped
     ports:
       # 0.0.0.0 de propósito: é o que deixa outro computador da casa abrir o

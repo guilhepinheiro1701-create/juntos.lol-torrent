@@ -233,7 +233,7 @@ describe('build info', () => {
     render(<MemoryRouter initialEntries={['/open']}><Home /></MemoryRouter>)
 
     const repo = screen.getByRole('link', { name: /source on github|código no github/i })
-    expect(repo).toHaveAttribute('href', 'https://github.com/giulianoo0/ss')
+    expect(repo).toHaveAttribute('href', 'https://github.com/guilhepinheiro1701-create/juntos.lol-torrent')
     expect(screen.queryByRole('link', { name: /^[0-9a-f]{7}$/ })).not.toBeInTheDocument()
   })
 })

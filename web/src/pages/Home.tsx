@@ -6,6 +6,7 @@ import { YoutubeGlyph } from '../ui/YoutubeGlyph'
 import { useT } from '../i18n/useT'
 import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl, createRoomAndUploadYoutube, isUnreadableFile, youtubeFileName, type UploadProgress } from '../upload'
 import { BuildInfo } from '../components/BuildInfo'
+import { UpdateNotice } from '../components/UpdateNotice'
 import { LibraryShelf } from '../components/LibraryShelf'
 import { StoragePicker } from '../components/StoragePicker'
 import { OfflineNotice } from '../components/OfflineNotice'
@@ -511,6 +512,7 @@ export function Home() {
           ))}
         </div>
         <div className="header-end">
+          <UpdateNotice t={t} />
           <BuildInfo label={t('home.source')} />
           <DiscordLink label={t('home.discord')} />
           <button type="button" className="header-plugins" onClick={() => setPluginsOpen(true)}>

@@ -1,10 +1,5 @@
 FROM node:24-bookworm AS web-build
 
-# The commit the image was built from, shown in the app's header. The build
-# context excludes .git, so it has to be handed in.
-ARG GIT_SHA=dev
-ENV VITE_GIT_SHA=$GIT_SHA
-
 # The community invite shown in the header, set per deployment in .env. Empty
 # by default: a fork with no server of its own shows no link at all.
 ARG DISCORD_URL=
@@ -24,6 +19,12 @@ COPY web/scripts ./scripts
 COPY web/patches ./patches
 RUN npm ci
 COPY web/ ./
+# The commit the image was built from: the header shows it, and the page
+# compares it with GitHub to offer an update. Declared here, after `npm ci`,
+# so a new commit rebuilds only the bundle, not the whole dependency tree.
+# The build context excludes .git, so it has to be handed in.
+ARG GIT_SHA=dev
+ENV VITE_GIT_SHA=$GIT_SHA
 RUN npm run build
 
 FROM golang:1.26-bookworm AS go-build

@@ -4,6 +4,8 @@ cd "$(dirname "$0")"
 
 [ -f .env.local ] || { echo "  [x] Falta o .env.local. Rode ./setup.sh primeiro."; exit 1; }
 
+# O commit desta instalacao vai para dentro do site (aviso de versao nova).
+export GIT_SHA="$(git rev-parse HEAD 2>/dev/null || head -n1 .versao 2>/dev/null || echo local)"
 compose() { docker compose --env-file .env.local "$@"; }
 
 # Quando algo dá errado, mostrar o que o servidor disse aqui mesmo, em vez de

@@ -189,6 +189,16 @@ Write-Host ''
 Nota 'Vai aparecer muito texto. Isso e normal. Deixe a janela aberta.'
 Write-Host ''
 
+# O commit desta instalacao vai para dentro do site no build: e com ele que o
+# site percebe que existe versao nova e mostra o aviso de atualizar.
+$env:GIT_SHA = 'local'
+if ((Test-Path -LiteralPath '.git') -and (Get-Command git -ErrorAction SilentlyContinue)) {
+    $sha = @(& git rev-parse HEAD 2>$null)
+    if ($LASTEXITCODE -eq 0 -and $sha.Count -gt 0) { $env:GIT_SHA = "$($sha[0])".Trim() }
+} elseif (Test-Path -LiteralPath '.versao') {
+    $env:GIT_SHA = (Get-Content -LiteralPath '.versao' -TotalCount 1).Trim()
+}
+
 & docker compose --env-file .env.local build
 if ($LASTEXITCODE -ne 0) {
     Write-Host ''

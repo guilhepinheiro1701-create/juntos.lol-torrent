@@ -11,7 +11,32 @@ O **Docker** existe para evitar exatamente isso. Ele roda cada programa dentro
 de uma caixa que já vem com tudo de que aquele programa precisa. Então a única
 coisa que você instala é o Docker; o resto vem pronto.
 
-## Windows
+## Instalar com um comando (Windows)
+
+Com o **Docker Desktop** já instalado e aberto (passo 1 logo abaixo), abra o
+**PowerShell** (menu Iniciar → digite *PowerShell*; não precisa ser
+administrador), cole isto e aperte Enter:
+
+```powershell
+irm https://raw.githubusercontent.com/guilhepinheiro1701-create/juntos.lol-torrent/local/instalar.ps1 | iex
+```
+
+Ele baixa tudo para `C:\Users\<você>\juntos.lol`, roda o setup e cria três
+atalhos na Área de Trabalho: **juntos.lol** (liga e abre o site),
+**Atualizar juntos.lol** e **Desligar juntos.lol**. Quer ler o script antes
+de rodar? Ele está no próprio repositório: `instalar.ps1`.
+
+## Atualizar
+
+Clique duas vezes em **Atualizar juntos.lol** na Área de Trabalho (ou em
+`atualizar.bat` na pasta; no Linux/macOS, `./atualizar.sh`). Ele mostra o que
+mudou, baixa só o código novo, recompila e liga de novo. Seus filmes, os
+recentes e o `.env.local` não são tocados.
+
+Quando existe versão nova, o próprio site avisa: aparece **Atualização
+disponível** no topo, com a lista do que mudou.
+
+## Windows, passo a passo
 
 **1. Instale o Docker Desktop.**
 Baixe em <https://www.docker.com/products/docker-desktop/> e instale.

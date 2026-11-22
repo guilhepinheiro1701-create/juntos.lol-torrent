@@ -1,6 +1,4 @@
-const REPOSITORY = 'https://github.com/giulianoo0/ss'
-
-const COMMIT = (import.meta.env.VITE_GIT_SHA as string | undefined) ?? 'dev'
+import { COMMIT, REPO_URL as REPOSITORY } from '../update'
 
 function shortCommit(sha: string): string {
   return sha.slice(0, 7)

@@ -1342,3 +1342,19 @@ body::before { background: radial-gradient(120% 60% at 50% -10%, #1B1418 0%, #0E
   .home-header .header-tabs { overflow-x: auto; scrollbar-width: none; }
   .home-header .header-tabs button { padding: 12px 14px; }
 }
+
+/* ---------- Aviso de atualizacao ---------- */
+.home-header .update-pill { position: fixed; top: 84px; right: max(clamp(16px, 4vw, 54px), calc((100% - 1240px) / 2)); z-index: 21; padding: 8px 15px; border: 1px solid rgba(255,122,69,.45); border-radius: 999px; color: #FFD0B8; background: rgba(255,122,69,.14); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); font-size: 12.5px; font-weight: 600; box-shadow: 0 0 22px rgba(255,122,69,.22); animation: update-glow 2.6s ease-in-out infinite; }
+.home-header .update-pill:hover:not(:disabled) { color: #fff; background: rgba(255,122,69,.24); border-color: rgba(255,122,69,.7); }
+@keyframes update-glow { 50% { box-shadow: 0 0 34px rgba(255,122,69,.38); } }
+@media (prefers-reduced-motion: reduce) { .home-header .update-pill { animation: none; } }
+.update-subtitle { margin: 0 0 8px; color: var(--text); font-size: 13px; font-weight: 600; }
+.update-changes { margin: 0 0 16px; padding: 12px 14px 12px 30px; max-height: 32vh; overflow: auto; border-radius: 14px; background: rgba(255,255,255,.04); border: 1px solid var(--border); color: var(--text-dim); font-size: 13px; line-height: 1.5; }
+.update-steps { margin: 0 0 14px; padding-left: 20px; color: var(--text); font-size: 14px; line-height: 1.55; display: grid; gap: 6px; }
+.update-foot { margin: 0; font-size: 12.5px; }
+.update-foot a { color: #FFB794; text-decoration: underline; text-underline-offset: 3px; }
+
+/* Cinco abas e o aviso de atualizacao dividem o cabecalho: abas mais justas. */
+@media (min-width: 621px) { .home-header .header-tabs button { padding: 8px 17px; } }
+@media (min-width: 1600px) { .home-header .update-pill { right: max(clamp(16px, 4vw, 54px), calc((100% - 1640px) / 2)); } }
+@media (max-width: 620px) { .home-header .update-pill { top: 70px; right: 12px; } .home-header .update-pill .nav-label { display: inline; } }
