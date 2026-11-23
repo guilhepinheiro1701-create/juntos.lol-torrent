@@ -83,6 +83,15 @@ services:
       # dezenove buscas entre os provedores — uma tarde de catálogo batia no
       # limite e as fontes começavam a voltar vazias, com 429 no console.
       PLUGIN_FETCH_PER_HOUR: ${PLUGIN_FETCH_PER_HOUR:-20000}
+      # Limites anti-abuso da versao em nuvem (10 torrents por hora, 2 ao mesmo
+      # tempo, 60 GB por dia) nao fazem sentido numa instalacao so sua: o modo
+      # basico tenta ate 4 fontes por clique e estourava o limite por hora em
+      # 3 cliques (erro 429), e assistir um filme enquanto outro baixa ja
+      # ocupava as 2 vagas. 0 = sem limite; o worker tem os proprios limites.
+      TORRENT_DISPATCH_PER_HOUR: ${TORRENT_DISPATCH_PER_HOUR:-0}
+      TORRENT_CONCURRENT_JOBS: ${TORRENT_CONCURRENT_JOBS:-0}
+      TORRENT_BYTES_PER_DAY_GB: ${TORRENT_BYTES_PER_DAY_GB:-0}
+      SESSIONS_PER_IP_PER_HOUR: ${SESSIONS_PER_IP_PER_HOUR:-200}
 
       # Saída para os plugins de fonte. Deixe vazio; só serve se algum addon
       # recusar o seu IP.
