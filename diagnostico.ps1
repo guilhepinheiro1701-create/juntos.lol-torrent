@@ -57,6 +57,22 @@ Rodar 'DNS de dentro do worker (roteadores de DHT e trackers)' {
     }
 }
 Rodar 'DNS configurado no worker' { docker compose --env-file .env.local exec -T worker cat /etc/resolv.conf }
+Rodar 'Teste de rede BitTorrent (dentro da rede do worker)' {
+    # Os torrents que o site tentou abrir aparecem no log do servidor
+    # (infoHash=...); o teste pergunta ao tracker pelos peers deles.
+    $hashes = @(docker compose --env-file .env.local logs --no-color --tail 400 app 2>$null |
+        Select-String -Pattern 'infoHash=([0-9a-fA-F]{40})' -AllMatches |
+        ForEach-Object { $_.Matches } | ForEach-Object { $_.Groups[1].Value.ToLower() } |
+        Select-Object -Unique -Last 4)
+    $id = @(docker compose --env-file .env.local ps -q worker 2>$null)
+    if ($id.Count -eq 0) { 'worker nao esta rodando' }
+    else {
+        # Um container descartavel na MESMA rede do worker (--network container:):
+        # o que ele alcanca e exatamente o que o worker alcanca.
+        Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'nettest.py') |
+            docker run -i --rm --network "container:$($id[0].Trim())" python:3.12-alpine python - @hashes
+    }
+}
 Rodar 'Logs do worker (baixador de torrents)' { docker compose --env-file .env.local logs --no-color --tail 300 worker }
 Rodar 'Logs do servidor' { docker compose --env-file .env.local logs --no-color --tail 150 app }
 
