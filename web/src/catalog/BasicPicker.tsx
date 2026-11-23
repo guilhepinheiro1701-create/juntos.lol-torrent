@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
-import { Download, Play, Sparkles } from 'lucide-react'
+import { Download, LoaderCircle, Play, ShieldAlert, Sparkles } from 'lucide-react'
 import { availableLanguages, availableQualities, rankStreams, type LanguageChoice, type QualityChoice } from './autoPick'
 import type { CatalogStream } from './streams'
+import { liveSeeds, type LiveSwarms } from './swarmHealth'
 
 type Translate = ((key: string) => string) & { language?: string }
 
@@ -25,6 +26,8 @@ interface BasicPickerProps {
   /** Fontes em ordem de preferencia: a primeira toca, as outras sao o plano B. */
   onWatch: (ranked: CatalogStream[]) => void
   onDownload?: (best: CatalogStream) => void
+  /** Seeds conferidos agora nos trackers (pelo servidor). */
+  live?: LiveSwarms
   t: Translate
 }
 
@@ -33,7 +36,7 @@ interface BasicPickerProps {
  * offline). Qual torrent, de qual plugin, com quantos seeds — isso o site
  * resolve. A lista completa continua no modo avancado, nas configuracoes.
  */
-export function BasicPicker({ streams, onWatch, onDownload, t }: BasicPickerProps) {
+export function BasicPicker({ streams, onWatch, onDownload, live, t }: BasicPickerProps) {
   const initial = useMemo(readPrefs, [])
   const qualities = useMemo(() => availableQualities(streams), [streams])
   const languages = useMemo(() => availableLanguages(streams), [streams])
@@ -44,10 +47,18 @@ export function BasicPicker({ streams, onWatch, onDownload, t }: BasicPickerProp
   const shownQuality: QualityChoice = quality !== 'auto' && !qualities.includes(quality) ? 'auto' : quality
   const shownLanguage: LanguageChoice = language !== 'auto' && !languages.includes(language) ? 'auto' : language
   const ranked = useMemo(
-    () => rankStreams(streams, shownQuality, shownLanguage, t.language !== 'en'),
-    [streams, shownQuality, shownLanguage, t.language],
+    () => rankStreams(streams, shownQuality, shownLanguage, t.language !== 'en', live),
+    [streams, shownQuality, shownLanguage, t.language, live],
   )
-  const best = ranked[0]
+  // Fontes conferidas sem seed nenhum nao entram na fila de tentativas
+  // (cada uma custava 45 s de espera) - a nao ser que nao sobre nenhuma.
+  const viable = useMemo(() => {
+    const alive = ranked.filter((stream) => liveSeeds(stream, live) !== 0)
+    return alive.length > 0 ? alive : ranked
+  }, [ranked, live])
+  const best = viable[0]
+  const bestLive = best ? liveSeeds(best, live) : null
+  const allDead = live !== undefined && !live.loading && ranked.length > 0 && ranked.every((stream) => liveSeeds(stream, live) === 0)
 
   const chooseQuality = (value: QualityChoice) => { setQuality(value); savePrefs(value, language) }
   const chooseLanguage = (value: LanguageChoice) => { setLanguage(value); savePrefs(quality, value) }
@@ -93,14 +104,25 @@ export function BasicPicker({ streams, onWatch, onDownload, t }: BasicPickerProp
         </div>
       ) : null}
       <p className="basic-choice">
-        <Sparkles size={14} aria-hidden="true" />
-        {t('basic.chosen')
+        {live?.loading ? <LoaderCircle size={14} className="spin" aria-hidden="true" /> : <Sparkles size={14} aria-hidden="true" />}
+        {live?.loading ? t('basic.checking') : t(bestLive !== null ? 'basic.chosenLive' : 'basic.chosen')
           .replace('{quality}', best.resolution === '2160p' ? '4K' : best.resolution === 'sd' ? 'SD' : best.resolution)
           .replace('{language}', best.languages.includes('🇧🇷') ? t('basic.dubbed') : t('basic.original'))
-          .replace('{seeds}', String(best.seeders ?? 0))}
+          .replace('{seeds}', String(bestLive ?? best.seeders ?? 0))}
       </p>
+      {live?.unreachable ? (
+        <p className="basic-warning" role="status">
+          <ShieldAlert size={16} aria-hidden="true" />
+          <span>{t('basic.trackersBlocked')}</span>
+        </p>
+      ) : allDead ? (
+        <p className="basic-warning" role="status">
+          <ShieldAlert size={16} aria-hidden="true" />
+          <span>{t('basic.allDead')}</span>
+        </p>
+      ) : null}
       <div className="basic-actions">
-        <button type="button" className="basic-watch" onClick={() => onWatch(ranked)}>
+        <button type="button" className="basic-watch" onClick={() => onWatch(viable)}>
           <Play size={18} aria-hidden="true" />
           <span>
             <strong>{t('basic.watch')}</strong>

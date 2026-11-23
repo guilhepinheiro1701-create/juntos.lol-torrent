@@ -57,6 +57,8 @@ func RegisterTorrentRoutes(rg *gin.RouterGroup, cfg config.Config, access Torren
 		group.Use(access.Sessions.Middleware())
 	}
 	group.GET("/workers", listWorkers(access.Service, cfg, access.Quota))
+	// Seeds de agora, perguntados aos trackers: o modo basico escolhe por isto.
+	group.POST("/health", NewSwarmHealth().handle)
 	start := []gin.HandlerFunc{}
 	if access.Quota != nil {
 		start = append(start, access.Quota.Dispatch())

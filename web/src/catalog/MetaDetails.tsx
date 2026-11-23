@@ -16,6 +16,7 @@ import type { TitleOpen } from './PosterCard'
 import { Badge } from '@/components/ui/badge'
 import { ContinueCard, episodePick, sameSource } from './ContinueCard'
 import { BasicPicker } from './BasicPicker'
+import { liveSeeds, useSwarmHealth } from './swarmHealth'
 import { useSourceMode } from '../settings'
 import { recentFor, subscribeRecents, type RecentEntry } from '../recents'
 
@@ -124,6 +125,9 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onPlayDi
   // Numa serie com historico, a fonte que tocou antes vira um atalho em cada
   // episodio: um clique e toca, sem garimpar a lista de novo.
   const remembered = recent && meta.type === 'series' && streams ? sameSource(streams, recent.pick.stream) : null
+  // Seeds de agora, conferidos nos trackers: o basico escolhe por eles e o
+  // avancado mostra ao lado do numero do plugin.
+  const live = useSwarmHealth(streams)
   const sheet = useMemo(() => typeof window !== 'undefined' && window.matchMedia('(max-width: 620px)').matches, [])
   const morphs = Boolean(open.rect) && !reduceMotion && !sheet
 
@@ -538,6 +542,7 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onPlayDi
               ) : sourceMode === 'basic' ? (
                 <BasicPicker
                   streams={streams}
+                  live={live}
                   t={t}
                   onWatch={(ranked) => {
                     const picks = ranked.slice(0, 4).map((stream) => makePick(stream, target))
@@ -601,7 +606,11 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onPlayDi
                             dizer: vazia, ela era uma mancha laranja sem texto. */}
                         {stream.quality ? <Badge className="stream-quality">{stream.quality}</Badge> : null}
                         {stream.languages.length > 0 ? <span className="stream-langs">{stream.languages.slice(0, 6).join(' ')}</span> : null}
-                        {stream.seeders !== null ? <Badge variant="secondary">{t('details.seeds').replace('{n}', String(stream.seeders))}</Badge> : null}
+                        {liveSeeds(stream, live) !== null ? (
+                          <Badge variant="secondary" className={liveSeeds(stream, live) === 0 ? 'seeds-dead' : 'seeds-live'} title={t('details.seedsLiveHint')}>
+                            {t('details.seedsLive').replace('{n}', String(liveSeeds(stream, live)))}
+                          </Badge>
+                        ) : stream.seeders !== null ? <Badge variant="secondary">{t('details.seeds').replace('{n}', String(stream.seeders))}</Badge> : null}
                         {stream.size ? <Badge variant="outline">{stream.size}</Badge> : null}
                         {stream.source ? <span className="stream-source">{stream.source}</span> : null}
                       </span>

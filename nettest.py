@@ -89,9 +89,11 @@ def section(title):
 
 section("1. UDP para trackers")
 working = None
+udp_ok = 0
 for host, port in TRACKERS:
     try:
         s, addr, cid = udp_connect(host, port)
+        udp_ok += 1
         print("ok     %s:%d" % (host, port))
         if working is None:
             working = (s, addr, cid, host)
@@ -109,6 +111,9 @@ for host, port in DHT:
     except Exception as e:
         print("FALHOU %s (%s)" % (host, e))
 
+RESULTS = {}
+
+
 def probe_peers(label, infohash):
     seeders, leechers, peers = announce(s, addr, cid, infohash)
     reached = 0
@@ -123,6 +128,7 @@ def probe_peers(label, infohash):
             pass
     print("%s  seeds=%d leechers=%d  peers recebidos=%d  conectaram por TCP=%d de %d"
           % (label, seeders, leechers, len(peers), reached, tried))
+    RESULTS[label.strip()] = (seeders, reached, tried)
 
 
 section("3. Referencia: torrent oficial do Ubuntu (sempre saudavel)")
@@ -157,3 +163,20 @@ try:
     print("ok     ha IPv6")
 except Exception as e:
     print("sem IPv6 (%s) - normal no Docker; so importa se tudo acima falhou" % e)
+
+
+section("CONCLUSAO")
+ub = RESULTS.get("ubuntu")
+tried_torrents = [v for k, v in RESULTS.items() if k != "ubuntu"]
+if udp_ok == 0:
+    print("O UDP do Docker esta bloqueado: nenhum tracker respondeu. Quase sempre e")
+    print("firewall/antivirus (ex.: Norton). Libere o Docker nele (rede vEthernet (WSL)")
+    print("como confiavel e os programas do Docker como permitidos).")
+elif ub is not None and ub[2] > 0 and ub[1] == 0:
+    print("O UDP funciona, mas nem os peers do Ubuntu (sempre saudavel) aceitaram")
+    print("conexao: a saida TCP para peers esta bloqueada (firewall/antivirus ou provedor).")
+elif tried_torrents and all(v[0] <= 1 for v in tried_torrents):
+    print("A rede esta OK. Os torrents que voce tentou tem 0 ou 1 seed: estao mortos.")
+    print("Escolha outra fonte ou um titulo mais popular.")
+else:
+    print("A rede esta OK para BitTorrent.")

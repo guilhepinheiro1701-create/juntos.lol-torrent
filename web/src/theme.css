@@ -1405,3 +1405,9 @@ body::before { background: radial-gradient(120% 60% at 50% -10%, #1B1418 0%, #0E
 .starting-simple h2 { margin: 0 0 6px; }
 .starting-simple .starting-file { margin: 0; color: var(--text-dim); font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .starting-simple .starting-cancel { justify-self: center; }
+
+/* Seeds conferidos agora */
+.basic-warning { display: flex; align-items: flex-start; gap: 9px; margin: 0; padding: 11px 13px; border-radius: 12px; color: #FFD9B8; background: rgba(255,170,60,.10); border: 1px solid rgba(255,170,60,.3); font-size: 13px; line-height: 1.45; }
+.basic-warning svg { flex: 0 0 auto; margin-top: 1px; color: #FFB86B; }
+.stream-meta .seeds-live { color: #9BF0B5; background: rgba(60,200,110,.14); }
+.stream-meta .seeds-dead { color: #FFB3B8; background: rgba(240,67,78,.14); }

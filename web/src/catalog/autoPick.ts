@@ -1,4 +1,5 @@
 import { isPlayable, type CatalogStream, type StreamResolution } from './streams'
+import { liveSeeds, type LiveSwarms } from './swarmHealth'
 
 /**
  * A escolha automatica do modo basico.
@@ -38,14 +39,18 @@ export function sizeBytes(size: string): number | null {
   return value * (unit === 'TB' ? 1024 ** 4 : unit === 'GB' ? 1024 ** 3 : unit === 'MB' ? 1024 ** 2 : 1024)
 }
 
-function score(stream: CatalogStream, quality: QualityChoice, language: LanguageChoice, preferPortuguese: boolean): number {
-  // Seeds mandam: e o que decide se o filme abre e se chega rapido. Em log,
-  // para 500 contra 400 nao valer mais que acertar a qualidade pedida.
-  // Satura em ~64 seeds: daí para cima o torrent ja abre e flui, e 400
-  // contra 120 nao deve valer mais que a qualidade ou o idioma pedidos.
-  const seeds = stream.seeders ?? 0
+function score(stream: CatalogStream, quality: QualityChoice, language: LanguageChoice, preferPortuguese: boolean, live?: LiveSwarms): number {
+  // Seeds mandam: e o que decide se o filme abre e se chega rapido. Em log e
+  // saturando em ~64: dai para cima o torrent ja abre e flui, e 400 contra
+  // 120 nao deve valer mais que acertar a qualidade ou o idioma pedidos.
+  // O numero conferido agora nos trackers vale mais que o do plugin, que
+  // envelhece; um torrent conferido sem seed nenhum vai para o fim da fila.
+  const verified = liveSeeds(stream, live)
+  const seeds = verified ?? stream.seeders ?? 0
   let value = Math.min(Math.log2(seeds + 1), 6) * 10
-  if (seeds === 0) value -= 40
+  if (verified === 0) value -= 120
+  else if (seeds === 0) value -= 40
+  else if (verified !== null) value += 5
 
   const wanted = quality === 'auto' ? null : quality
   if (wanted) {
@@ -71,10 +76,11 @@ export function rankStreams(
   quality: QualityChoice,
   language: LanguageChoice,
   preferPortuguese = true,
+  live?: LiveSwarms,
 ): CatalogStream[] {
   return streams
     .filter(isPlayable)
-    .map((stream, index) => ({ stream, index, value: score(stream, quality, language, preferPortuguese) }))
+    .map((stream, index) => ({ stream, index, value: score(stream, quality, language, preferPortuguese, live) }))
     .sort((a, b) => b.value - a.value || a.index - b.index)
     .map((entry) => entry.stream)
 }
