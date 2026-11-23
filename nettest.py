@@ -2,10 +2,10 @@
 # proprio worker (docker run --network container:<worker>). So le e pergunta:
 # nao baixa nada nem fica de pe.
 #
-# Responde quatro perguntas, que separam "o torrent esta morto" de "a rede do
+# Responde cinco perguntas, que separam "o torrent esta morto" de "a rede do
 # Docker nao deixa o BitTorrent passar":
 #   1. UDP para trackers funciona?   2. A DHT responde?
-#   3. Os peers do torrent tentado aceitam conexao?   4. Ha IPv6?
+#   3. Um torrent saudavel (Ubuntu) conecta?   4. E os tentados?   5. IPv6?
 import os
 import random
 import socket
@@ -47,6 +47,41 @@ def announce(s, addr, cid, infohash):
     return seeders, leechers, peers
 
 
+def bencode_info_hash(data):
+    """SHA-1 do dicionario 'info' de um .torrent, sem biblioteca: acha onde
+    ele comeca e anda pelo bencode ate o fim dele."""
+    import hashlib
+
+    def end(i):
+        c = data[i:i + 1]
+        if c == b"i":
+            return data.index(b"e", i) + 1
+        if c in (b"l", b"d"):
+            i += 1
+            while data[i:i + 1] != b"e":
+                i = end(i)
+            return i + 1
+        colon = data.index(b":", i)
+        return colon + 1 + int(data[i:colon])
+
+    start = data.index(b"4:info") + len(b"4:info")
+    return hashlib.sha1(data[start:end(start)]).hexdigest()
+
+
+def ubuntu_reference():
+    """O torrent oficial do Ubuntu: legal, sempre com milhares de seeds. Serve
+    de regua - se nem os peers dele conectam, o problema e a rede."""
+    import re
+    import urllib.request
+    base = "https://releases.ubuntu.com/24.04/"
+    page = urllib.request.urlopen(base, timeout=15).read().decode("utf-8", "replace")
+    names = sorted(set(re.findall(r'href="(ubuntu-[^"]+-desktop-amd64\.iso\.torrent)"', page)))
+    if not names:
+        raise RuntimeError("nao achei o .torrent na pagina do Ubuntu")
+    data = urllib.request.urlopen(base + names[-1], timeout=15).read()
+    return names[-1], bencode_info_hash(data)
+
+
 def section(title):
     print("")
     print("-- " + title)
@@ -74,7 +109,35 @@ for host, port in DHT:
     except Exception as e:
         print("FALHOU %s (%s)" % (host, e))
 
-section("3. Peers dos torrents que voce tentou abrir")
+def probe_peers(label, infohash):
+    seeders, leechers, peers = announce(s, addr, cid, infohash)
+    reached = 0
+    tried = 0
+    for ip, port in peers[:12]:
+        tried += 1
+        try:
+            c = socket.create_connection((ip, port), timeout=3)
+            c.close()
+            reached += 1
+        except Exception:
+            pass
+    print("%s  seeds=%d leechers=%d  peers recebidos=%d  conectaram por TCP=%d de %d"
+          % (label, seeders, leechers, len(peers), reached, tried))
+
+
+section("3. Referencia: torrent oficial do Ubuntu (sempre saudavel)")
+if working is None:
+    print("sem tracker UDP funcionando: nao da para perguntar pelos peers")
+else:
+    s, addr, cid, host = working
+    try:
+        name, ubuntu = ubuntu_reference()
+        probe_peers("ubuntu    ", ubuntu)
+        print("(%s)" % name)
+    except Exception as e:
+        print("nao deu para testar a referencia (%s)" % e)
+
+section("4. Peers dos torrents que voce tentou abrir")
 if not HASHES:
     print("(nenhum torrent tentado nos logs)")
 elif working is None:
@@ -83,23 +146,11 @@ else:
     s, addr, cid, host = working
     for infohash in HASHES[:4]:
         try:
-            seeders, leechers, peers = announce(s, addr, cid, infohash)
-            reached = 0
-            tried = 0
-            for ip, port in peers[:12]:
-                tried += 1
-                try:
-                    c = socket.create_connection((ip, port), timeout=3)
-                    c.close()
-                    reached += 1
-                except Exception:
-                    pass
-            print("%s  seeds=%d leechers=%d  peers recebidos=%d  conectaram por TCP=%d de %d"
-                  % (infohash[:10], seeders, leechers, len(peers), reached, tried))
+            probe_peers(infohash[:10], infohash)
         except Exception as e:
             print("%s  FALHOU ao perguntar ao %s (%s)" % (infohash[:10], host, e))
 
-section("4. IPv6")
+section("5. IPv6")
 try:
     c = socket.create_connection(("2606:4700:4700::1111", 443), timeout=4)
     c.close()
