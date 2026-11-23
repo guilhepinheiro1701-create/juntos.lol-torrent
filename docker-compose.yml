@@ -31,6 +31,12 @@ services:
         # O start e o atualizar preenchem; sem eles, fica "local".
         GIT_SHA: ${GIT_SHA:-local}
     restart: unless-stopped
+    # DNS proprio pelo mesmo motivo do worker (os plugins buscam fontes na
+    # internet a partir daqui).
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+      - 9.9.9.9
     ports:
       # 0.0.0.0 de propósito: é o que deixa outro computador da casa abrir o
       # site para assistir na TV. Só a sua rede o alcança — o roteador não
@@ -99,6 +105,16 @@ services:
     build:
       context: ./ss-worker
     restart: unless-stopped
+    # DNS proprio, em vez do que o Windows passa ao Docker. O do provedor (ou
+    # um filtro: antivirus, AdGuard, NextDNS) costuma responder "nao existe"
+    # para trackers e roteadores de DHT, e ai o worker fica sem nenhum peer:
+    # todo torrent falha por "sem metadados". Os nomes internos (app, redis)
+    # continuam resolvidos pelo proprio Docker. Para voltar ao DNS do Windows,
+    # apague estas linhas.
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+      - 9.9.9.9
     logging:
       driver: json-file
       options: { max-size: 50m, max-file: "3" }

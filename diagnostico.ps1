@@ -50,7 +50,13 @@ Rodar 'Configuracao (.env.local, sem segredos)' {
     } else { 'sem .env.local' }
 }
 Rodar 'Espaco em disco' { Get-PSDrive -PSProvider FileSystem | ForEach-Object { '{0}: livre {1:N1} GB de {2:N1} GB' -f $_.Name, ($_.Free / 1GB), (($_.Used + $_.Free) / 1GB) } }
-Rodar 'Worker consegue achar a internet? (DNS de um tracker)' { docker compose --env-file .env.local exec -T worker getent hosts tracker.opentrackr.org }
+Rodar 'DNS de dentro do worker (roteadores de DHT e trackers)' {
+    foreach ($h in @('dht.transmissionbt.com', 'router.bittorrent.com', 'router.utorrent.com', 'dht.libtorrent.org', 'tracker.opentrackr.org', 'open.stealth.si')) {
+        $r = @(docker compose --env-file .env.local exec -T worker getent hosts $h 2>&1)
+        if ($LASTEXITCODE -eq 0 -and $r.Count -gt 0) { "ok     $h -> $(("$($r[0])" -split '\s+')[0])" } else { "FALHOU $h" }
+    }
+}
+Rodar 'DNS configurado no worker' { docker compose --env-file .env.local exec -T worker cat /etc/resolv.conf }
 Rodar 'Logs do worker (baixador de torrents)' { docker compose --env-file .env.local logs --no-color --tail 300 worker }
 Rodar 'Logs do servidor' { docker compose --env-file .env.local logs --no-color --tail 150 app }
 
