@@ -43,12 +43,15 @@ impl Fill {
 pub struct Reader {
     pub quiet: bool,
     pub window_have: bool,
+    /// Alguem ainda quer este torrent: uma sala lendo ou "guardar offline".
+    /// Sem isso, encher o arquivo e banda roubada do proximo titulo.
+    pub wanted: bool,
 }
 
 /// The next state, from the current one and what the sweep observed.
 /// `fits` is whether the whole file could be reserved right now.
 pub fn decide(now: Fill, reader: Reader, fits: bool) -> Fill {
-    if !fits {
+    if !fits || !reader.wanted {
         return Fill::Off;
     }
     if reader.quiet && reader.window_have {
@@ -64,9 +67,9 @@ pub fn decide(now: Fill, reader: Reader, fits: bool) -> Fill {
 mod tests {
     use super::*;
 
-    const QUIET_AND_HAVE: Reader = Reader { quiet: true, window_have: true };
-    const BUSY: Reader = Reader { quiet: false, window_have: true };
-    const WAITING: Reader = Reader { quiet: true, window_have: false };
+    const QUIET_AND_HAVE: Reader = Reader { quiet: true, window_have: true, wanted: true };
+    const BUSY: Reader = Reader { quiet: false, window_have: true, wanted: true };
+    const WAITING: Reader = Reader { quiet: true, window_have: false, wanted: true };
 
     #[test]
     fn starts_only_when_the_reader_is_quiet_and_served() {
@@ -80,6 +83,14 @@ mod tests {
         assert_eq!(decide(Fill::Filling, BUSY, true), Fill::Holding);
         assert_eq!(decide(Fill::Holding, BUSY, true), Fill::Holding);
         assert_eq!(decide(Fill::Holding, QUIET_AND_HAVE, true), Fill::Filling);
+    }
+
+    #[test]
+    fn nobody_left_means_no_fill() {
+        let orphan = Reader { quiet: true, window_have: true, wanted: false };
+        assert_eq!(decide(Fill::Off, orphan, true), Fill::Off);
+        assert_eq!(decide(Fill::Filling, orphan, true), Fill::Off);
+        assert_eq!(decide(Fill::Holding, orphan, true), Fill::Off);
     }
 
     #[test]

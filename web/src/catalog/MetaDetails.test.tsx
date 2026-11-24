@@ -55,9 +55,13 @@ describe('MetaDetails and its empty states', () => {
 
   it('names the plugins that broke instead of telling you to install more', async () => {
     vi.mocked(resolveStreams).mockResolvedValue({ kind: 'streams', streams: [], failed: ['Acme'] })
+    vi.mocked(resolveStreams).mockClear()
     show('create')
-    expect(await screen.findByText(/os plugins falharam/i)).toBeInTheDocument()
+    // Todos falhando juntos ganha uma segunda tentativa sozinha (4 s) antes
+    // de virar erro na tela.
+    expect(await screen.findByText(/os plugins falharam/i, undefined, { timeout: 6_000 })).toBeInTheDocument()
+    expect(vi.mocked(resolveStreams)).toHaveBeenCalledTimes(2)
     expect(screen.getByText(/Acme/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /instalar um plugin/i })).toBeNull()
-  })
+  }, 10_000)
 })

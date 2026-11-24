@@ -152,10 +152,18 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onPlayDi
     return null
   }, [detail?.imdbId, meta.id, meta.type, selected])
 
+  // Quando TODOS os plugins falham juntos, quase nunca e o titulo: e a
+  // internet do servidor ocupada naquele instante (um download em curso).
+  // Uma segunda tentativa sozinha, poucos segundos depois, costuma passar.
+  const autoRetriedRef = useRef(false)
+  useEffect(() => {
+    autoRetriedRef.current = false
+  }, [target])
   useEffect(() => {
     if (!target) return
     const abort = new AbortController()
     let cancelled = false
+    let retryTimer = 0
     setStreams(null)
     setStreamsFailed(false)
     setNoPlugins(false)
@@ -168,11 +176,17 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onPlayDi
           setStreams([])
           return
         }
+        if (result.streams.length === 0 && result.failed.length > 0 && !autoRetriedRef.current) {
+          autoRetriedRef.current = true
+          retryTimer = window.setTimeout(() => setStreamRetry((seq) => seq + 1), 4_000)
+          return
+        }
         setStreams(result.streams)
         setBrokenPlugins(result.failed)
       })
       .catch(() => { if (!cancelled) setStreamsFailed(true) })
     return () => {
+      window.clearTimeout(retryTimer)
       cancelled = true
       abort.abort()
     }

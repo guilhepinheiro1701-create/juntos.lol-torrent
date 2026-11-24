@@ -145,12 +145,16 @@ services:
       SS_WORKER_BT_PORT: "4240"
       SS_WORKER_DISK_QUOTA_GB: ${WORKER_DISK_QUOTA_GB:-35}
       SS_WORKER_MAX_LEASES: ${WORKER_MAX_LEASES:-8}
-      # Quantos peers por torrent. Aqui o enxame inteiro é seu.
-      SS_WORKER_PEER_LIMIT: ${WORKER_PEER_LIMIT:-150}
-      # Subida em Mbit/s; 0 é sem limite. No BitTorrent quem não envia não
-      # recebe, então limitar a subida limita a descida junto. Ponha um número
-      # se a sua internet engasga com a subida cheia.
-      SS_WORKER_UPLOAD_MBIT: ${WORKER_UPLOAD_MBIT:-0}
+      # Quantos peers por torrent. 100 basta para abrir e manter a velocidade;
+      # mais que isso so enche a tabela de conexoes do Docker e do roteador,
+      # e as outras conexoes da casa comecam a falhar.
+      SS_WORKER_PEER_LIMIT: ${WORKER_PEER_LIMIT:-100}
+      # Subida em Mbit/s (0 = sem limite). Era sem limite, e com a subida da
+      # internet cheia as outras conexoes do PC (DNS, busca de fontes, outro
+      # filme) esperam na fila ate estourar o tempo: era o "segundo filme nao
+      # abre". 10 Mbit/s mantem o enxame contente sem afogar a casa; com
+      # internet de subida rapida, pode aumentar no .env.local.
+      SS_WORKER_UPLOAD_MBIT: ${WORKER_UPLOAD_MBIT:-10}
       # Desligado aqui, e não é preferência: de dentro de um container o UPnP
       # fala com o gateway do Docker, não com o seu roteador, então o pedido
       # nunca chega a quem poderia abrir a porta. Eu liguei isto por engano na

@@ -871,16 +871,20 @@ impl Engine {
     /// The sweep's look at whether the swarm should be filling the file
     /// behind the readers, and the bookkeeping when the answer changes.
     fn sweep_fill(&self, infohash: &str, handle: &Handle) {
-        let (index, now, playhead, quiet) = {
+        let (index, now, playhead, quiet, wanted) = {
             let map = self.torrents.lock();
             let Some(entry) = map.get(infohash) else { return };
+            // Ninguem lendo e nada guardado: o torrent so espera o reaper.
+            // Encher o arquivo agora so disputaria a banda com o proximo
+            // titulo (era o que fazia o segundo filme nao abrir).
+            let wanted = !entry.reclaimable();
             let Some(index) = entry.selected_file else { return };
             let playhead = entry.slots.get(&(index, Prio::Playhead)).cloned();
             let quiet = match &playhead {
                 Some(slot) => slot.since_moved() >= fill::QUIET && slot.idle_for() >= fill::QUIET,
                 None => entry.last_active.elapsed() >= fill::QUIET,
             };
-            (index, entry.fill, playhead, quiet)
+            (index, entry.fill, playhead, quiet, wanted)
         };
         let guard = handle.metadata.load();
         let Some(meta) = guard.as_ref() else { return };
@@ -904,7 +908,7 @@ impl Engine {
             }
         };
         let fits = self.disk.fits_replacing(infohash, full);
-        let next = fill::decide(now, fill::Reader { quiet, window_have }, fits);
+        let next = fill::decide(now, fill::Reader { quiet, window_have, wanted }, fits);
         if next == now {
             return;
         }

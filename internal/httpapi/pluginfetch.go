@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -261,6 +262,9 @@ func (f *PluginFetcher) handle(c *gin.Context) {
 	req.Header.Set("Accept", "application/json, */*;q=0.8")
 	resp, err := f.client.Do(req)
 	if err != nil {
+		// No log, com o motivo: "no such host" e DNS, "i/o timeout" e rede
+		// saturada ou bloqueada. Sem isto o diagnostico so via um 502 mudo.
+		slog.Warn("plugin fetch failed", "host", target.Host, "error", err.Error())
 		c.JSON(http.StatusBadGateway, gin.H{"error": "upstream", "reason": err.Error()})
 		return
 	}

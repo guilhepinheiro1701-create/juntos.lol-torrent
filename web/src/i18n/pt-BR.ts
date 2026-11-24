@@ -283,7 +283,7 @@ export const ptBR: Record<string, string> = {
   'details.openPlugins': 'Instalar um plugin',
   'details.noPluginsHint': 'Um plugin é quem sabe onde encontrar essa mídia. Sem nenhum instalado, não há onde procurar.',
   'details.noPluginResolvedHint': 'Os plugins instalados procuraram e não acharam nada para esse título. Outro plugin pode conhecer outras fontes.',
-  'details.pluginsBrokeHint': 'Não é que não exista fonte: os plugins não responderam. Vale tentar de novo em instantes.',
+  'details.pluginsBrokeHint': 'Não é que não exista fonte: os plugins não responderam. Se um filme estiver baixando agora, a internet pode estar ocupada; tente de novo em instantes.',
   'details.noFilteredSourcesHint': 'Existem fontes, mas nenhuma passa por esses filtros.',
   'details.clearFilters': 'Limpar filtros',
   'details.retrySources': 'Procurar de novo',
