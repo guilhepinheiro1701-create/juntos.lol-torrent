@@ -25,8 +25,8 @@
 
 export const manifest = {
   id: 'juntos-torrent-sources',
-  name: 'Torrentio + Brazuca + Comet + MediaFusion',
-  version: '4.3.0',
+  name: 'Fontes BR (BeTor, Peerflix, Mico-Leão...) + Torrentio + Comet',
+  version: '4.4.0',
   // Every host this plugin may ever reach. The page compares the hostname of
   // each request against this list by exact equality, on the URL asked for and
   // again on the URL the answer came from, so a host added to PROVIDERS later
@@ -42,6 +42,8 @@ export const manifest = {
     '27a5b2bfe3c0-stremio-brazilian-addon.baby-beamup.club',
     'torrent-indexer.darklyn.org',
     'v3-cinemeta.strem.io',
+    'addon.peerflix.mov',
+    'stremio-betor.onrender.com',
   ],
   updateUrl: 'https://github.com/guilhepinheiro1701-create/juntos.lol-torrent',
 }
@@ -60,7 +62,7 @@ export const manifest = {
  * configured path is asked again without it (see `ask`).
  */
 const TORRENTIO_CONFIG = [
-  'providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy,magnetdl,horriblesubs,nyaasi,tokyotosho,anidex,comando,bludv',
+  'providers=yts,eztv,rarbg,1337x,thepiratebay,kickasstorrents,torrentgalaxy,magnetdl,horriblesubs,nyaasi,tokyotosho,anidex,comando,bludv,micoleaodublado',
   'language=portuguese',
   'sort=qualitysize',
   'qualityfilter=scr,cam,unknown',
@@ -236,6 +238,23 @@ const PROVIDERS = [
       { base: 'https://27a5b2bfe3c0-stremio-brazilian-addon.baby-beamup.club', config: null },
     ],
   },
+  {
+    // Acervo brasileiro (BluDV, Comando...) com muito "Dual Audio", inclusive
+    // temporadas inteiras de series que as outras fontes nao trazem. Roda no
+    // Render, que dorme sem uso: a primeira busca do dia pode voltar vazia.
+    name: 'BeTor',
+    mirrors: [
+      { base: 'https://stremio-betor.onrender.com', config: null },
+    ],
+  },
+  {
+    // So o que tem audio em portugues (`language=pt`): releases DUAL de
+    // grupos brasileiros, com trackers e seeds. Forte em filmes.
+    name: 'Peerflix PT',
+    mirrors: [
+      { base: 'https://addon.peerflix.mov', config: 'language=pt' },
+    ],
+  },
   indexerProvider('bludv', 'BluDV'),
   indexerProvider('comando_torrents', 'Comando'),
   indexerProvider('rede_torrent', 'Rede Torrent'),
@@ -258,8 +277,11 @@ const PROVIDERS = [
   {
     name: 'Comet',
     mirrors: [
-      { base: 'https://comet.elfhosted.com', config: COMET_CONFIG },
+      // feels.legal primeiro: a ElfHosted desligou buscas sem servico pago e
+      // responde com um aviso disfarcado de fonte ("Non-debrid searches
+      // disabled"), que aparecia na lista e nunca tocava.
       { base: 'https://comet.feels.legal', config: COMET_CONFIG },
+      { base: 'https://comet.elfhosted.com', config: COMET_CONFIG },
     ],
   },
   {
@@ -345,7 +367,28 @@ const stremioStreams = (body) => (Array.isArray(body.streams) ? body.streams : n
  * from taking the mirror down with it: worst case the addon answers
  * unfiltered, which is worse than configured and far better than nothing.
  */
+/**
+ * Addons avisam de erro com uma "fonte" falsa: sem torrent, com um nome tipo
+ * "[⛔️] Comet" e a explicacao na descricao. Nao e fonte: some da lista, e o
+ * espelho que so respondeu isso conta como vazio, para o proximo ser tentado.
+ */
+const NOTICE = /⛔|❌|🚫|\b(error|erro|disabled|desativad|invalid|rate.?limit|debrid provider|configure)\b/i
+
+function isNotice(raw) {
+  if (typeof raw !== 'object' || raw === null || typeof raw.infoHash === 'string') return false
+  const text = `${raw.name ?? ''} ${raw.title ?? ''} ${raw.description ?? ''}`
+  return NOTICE.test(text)
+}
+
+/** Uma fonte sozinha nao afoga a lista (o Comet chega a mandar 1.600). */
+const MAX_PER_PROVIDER = 120
+
 async function ask(api, provider, mirror, ctx) {
+  const all = await askRaw(api, provider, mirror, ctx)
+  return all.filter((raw) => !isNotice(raw)).slice(0, MAX_PER_PROVIDER)
+}
+
+async function askRaw(api, provider, mirror, ctx) {
   const adapt = provider.adapt ?? stremioStreams
   if (mirror.url) {
     const url = mirror.url(ctx)

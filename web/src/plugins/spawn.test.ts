@@ -38,4 +38,12 @@ describe('pageFetch', () => {
     await expect(pageFetch(new URL('https://a.com/x'), new AbortController().signal))
       .rejects.toThrow(/hop 502/)
   })
+
+  it('reads the addon status from X-Upstream-Status when the hop answers 200', async () => {
+    const answer = hopAnswer('down', { status: 200, finalUrl: 'https://addon.example/x' })
+    answer.headers.set('X-Upstream-Status', '500')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(answer))
+    const result = await pageFetch(new URL('https://addon.example/x'), new AbortController().signal)
+    expect(result).toMatchObject({ ok: false, status: 500, text: 'down' })
+  })
 })

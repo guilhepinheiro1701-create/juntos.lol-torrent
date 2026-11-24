@@ -257,6 +257,7 @@ export const en: Record<string, string> = {
   'basic.allDead': 'No source for this title has seeds right now. It may not open; try later or another title.',
   'details.seedsLive': '{n} seeds now',
   'details.seedsLiveHint': 'Verified now on the trackers',
+  'library.browse': 'Browse the catalog',
   'catalog.searching': 'Searching…',
   'catalog.noResults': 'Nothing found with that name.',
   'catalog.popularMovies': 'Popular movies',

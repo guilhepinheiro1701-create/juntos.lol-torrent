@@ -257,6 +257,7 @@ export const ptBR: Record<string, string> = {
   'basic.allDead': 'Nenhuma fonte deste título tem seeds agora. Pode não abrir; tente mais tarde ou outro título.',
   'details.seedsLive': '{n} seeds agora',
   'details.seedsLiveHint': 'Conferido agora nos trackers',
+  'library.browse': 'Ir ao catálogo',
   'catalog.searching': 'Buscando…',
   'catalog.noResults': 'Nada encontrado com esse nome.',
   'catalog.popularMovies': 'Filmes populares',

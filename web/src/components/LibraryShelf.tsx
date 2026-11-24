@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Film, Play, Trash2 } from 'lucide-react'
+import { Film, Play, Trash2, Download } from 'lucide-react'
 import type { Translator } from '../i18n/useT'
 import { forget, library, noteProgress, type LibraryEntry } from '../library'
 import { openTorrent } from '../torrent'
@@ -27,9 +27,11 @@ function gigabytes(bytes: number): string {
  * This is the one screen that works with no network at all: the catalogue
  * needs an addon and a metadata service, and this needs neither.
  */
-export function LibraryShelf({ t, onOpened }: {
+export function LibraryShelf({ t, onOpened, onBrowse }: {
   t: Translator
   onOpened: (roomId: string) => void
+  /** Leva ao catalogo: o vazio de Baixados aponta para onde se baixa. */
+  onBrowse?: () => void
 }) {
   const { toast } = useToast()
   const [entries, setEntries] = useState<LibraryEntry[]>([])
@@ -131,9 +133,11 @@ export function LibraryShelf({ t, onOpened }: {
 
   if (entries.length === 0) {
     return (
-      <div className="library-empty">
-        <h2>{t('library.emptyTitle')}</h2>
+      <div className="library-empty recent-empty">
+        <Download size={26} aria-hidden="true" />
+        <strong>{t('library.emptyTitle')}</strong>
         <p>{t('library.emptyGuide')}</p>
+        {onBrowse ? <button type="button" className="empty-cta" onClick={onBrowse}>{t('library.browse')}</button> : null}
         <StoragePicker t={t} />
       </div>
     )

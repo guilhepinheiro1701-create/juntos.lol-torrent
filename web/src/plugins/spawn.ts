@@ -53,9 +53,13 @@ export async function pageFetch(url: URL, signal: AbortSignal): Promise<FetchRes
   if (!finalUrl) {
     throw new Error(`hop ${response.status}: ${await readCapped(response, 1 << 10, signal)}`)
   }
+  // O servidor repassa o status do addon em X-Upstream-Status (e responde
+  // 200 ao navegador, para um addon fora do ar nao sujar o console).
+  const upstream = Number(response.headers.get('X-Upstream-Status'))
+  const status = Number.isInteger(upstream) && upstream >= 100 && upstream <= 599 ? upstream : response.status
   return {
-    ok: response.ok,
-    status: response.status,
+    ok: status >= 200 && status < 300,
+    status,
     text: await readCapped(response, MAX_BODY_BYTES, signal),
     finalUrl,
   }

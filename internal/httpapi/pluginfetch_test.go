@@ -78,7 +78,10 @@ func TestPluginFetchRelaysTheAddonAnswerWithoutABrowserOrigin(t *testing.T) {
 
 	w := hop(r, target)
 
-	require.Equal(t, http.StatusTeapot, w.Code, "the addon's status travels back verbatim")
+	// The hop itself answers 200 so a dead addon is not a red error line on
+	// the page; the addon's own status travels back verbatim in a header.
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "418", w.Header().Get("X-Upstream-Status"), "the addon's status travels back verbatim")
 	require.Equal(t, `{"streams":[]}`, w.Body.String())
 	require.Equal(t, target, w.Header().Get("X-Final-Url"))
 	require.Equal(t, "text/plain; charset=utf-8", w.Header().Get("Content-Type"))

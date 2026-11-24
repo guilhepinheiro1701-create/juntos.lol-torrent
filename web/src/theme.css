@@ -1411,3 +1411,21 @@ body::before { background: radial-gradient(120% 60% at 50% -10%, #1B1418 0%, #0E
 .basic-warning svg { flex: 0 0 auto; margin-top: 1px; color: #FFB86B; }
 .stream-meta .seeds-live { color: #9BF0B5; background: rgba(60,200,110,.14); }
 .stream-meta .seeds-dead { color: #FFB3B8; background: rgba(240,67,78,.14); }
+
+/* ---------- Abas: icones e barra de baixo no celular ---------- */
+.home-header .header-tabs .tab-icon { display: none; }
+.home-header .header-tabs button { position: relative; }
+.home-header .header-tabs .tab-icon, .home-header .header-tabs .season-tab-label { position: relative; z-index: 1; }
+@media (max-width: 620px) {
+  /* Cinco abas nao cabiam lado a lado em texto: "Abrir" e "Status" sumiam
+     para fora da tela. Icone em cima, rotulo pequeno embaixo, todas iguais. */
+  .home-header .header-tabs { left: 10px; right: 74px; max-width: none; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; padding: 4px; overflow: visible; }
+  .home-header .header-tabs button { display: grid; justify-items: center; align-content: center; gap: 2px; padding: 7px 2px 6px; min-width: 0; }
+  .home-header .header-tabs .tab-icon { display: block; line-height: 0; }
+  .home-header .header-tabs .season-tab-label { font-size: 10.5px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .home-header .header-tabs .season-pill { border-radius: 16px; }
+}
+
+.empty-cta { margin-top: 8px; padding: 10px 20px; border: 0; border-radius: 999px; color: #0C0A0B; background: #fff; font-weight: 650; }
+.empty-cta:hover:not(:disabled) { background: rgba(255,255,255,.86); }
+.library-empty.recent-empty h2 { display: none; }

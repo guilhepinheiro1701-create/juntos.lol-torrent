@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -271,6 +272,12 @@ func (f *PluginFetcher) handle(c *gin.Context) {
 	defer resp.Body.Close()
 	c.Header("X-Final-Url", resp.Request.URL.String())
 	c.Header("Content-Type", "text/plain; charset=utf-8")
-	c.Writer.WriteHeader(resp.StatusCode)
+	// O status do addon vai num cabecalho, e o salto em si responde 200: um
+	// addon fora do ar (o Brazuca respondendo 500, por exemplo) e uma resposta
+	// normal para o plugin, que ja trata, e nao uma linha vermelha de erro do
+	// nosso site no console a cada busca. Falha do proprio salto (DNS, tempo)
+	// continua sendo 502, la em cima.
+	c.Header("X-Upstream-Status", strconv.Itoa(resp.StatusCode))
+	c.Writer.WriteHeader(http.StatusOK)
 	_, _ = io.Copy(c.Writer, io.LimitReader(resp.Body, f.MaxBytes))
 }

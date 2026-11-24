@@ -12,6 +12,19 @@ const POLL_MS = 10000
 // sem resposta, o intervalo cresce; uma resposta devolve o ritmo normal.
 const BACKOFF_AFTER = 3
 const MAX_POLL_MS = 5 * 60 * 1000
+// Na versao local o jlocal quase nunca existe, e cada pergunta sem resposta
+// e uma linha vermelha no console (os "127.0.0.1:40392 ERR_CONNECTION_REFUSED"
+// que apareciam em todo log). So se pergunta sozinho depois de ele ter
+// respondido alguma vez neste navegador; antes disso, so pelo botao.
+const SEEN_KEY = 'ss.jlocal-seen'
+
+function seenBefore(): boolean {
+  try { return localStorage.getItem(SEEN_KEY) === '1' } catch { return false }
+}
+
+function markSeen(): void {
+  try { localStorage.setItem(SEEN_KEY, '1') } catch {}
+}
 
 export interface JLocalSnapshot {
   connected: boolean
@@ -59,6 +72,10 @@ async function refresh(manual: boolean): Promise<void> {
   const was = snapshot.connected
   const connected = version !== null
   misses = connected ? 0 : misses + 1
+  if (connected) {
+    markSeen()
+    if (listeners.size > 0) ensurePolling()
+  }
   emit({ ...snapshot, connected, version, connecting: false })
   if (connected && !was) playJLocalChime()
 }
@@ -91,8 +108,10 @@ function ensurePolling(): void {
 
 export function subscribeJLocal(listener: () => void): () => void {
   listeners.add(listener)
-  ensurePolling()
-  void refresh(false)
+  if (seenBefore()) {
+    ensurePolling()
+    void refresh(false)
+  }
   return () => { listeners.delete(listener) }
 }
 

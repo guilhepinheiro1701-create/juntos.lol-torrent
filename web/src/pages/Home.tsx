@@ -1,7 +1,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState, type DragEvent, type ChangeEvent } from 'react'
 import { AnimatePresence, motion, useReducedMotion, LayoutGroup } from 'motion/react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import { Download, FolderOpen, Play, Puzzle, Upload } from 'lucide-react'
+import { Activity, Clapperboard, Download, FolderOpen, History, Play, Puzzle, Upload } from 'lucide-react'
 import { YoutubeGlyph } from '../ui/YoutubeGlyph'
 import { useT } from '../i18n/useT'
 import { createRoomAndUpload, createRoomAndUploadTorrent, createRoomAndUploadUrl, createRoomAndUploadYoutube, isUnreadableFile, youtubeFileName, type UploadProgress } from '../upload'
@@ -540,7 +540,7 @@ export function Home() {
           <button className="header-language" aria-label={t('home.language')} onClick={() => t.setLanguage(t.language === 'en' ? 'pt-BR' : 'en')}>
             <span aria-hidden="true">{t.language === 'en' ? '🇺🇸' : '🇧🇷'}</span>{t.language === 'en' ? 'EN' : 'PT'}
           </button>
-          <JlocalStatus status={jlocal} t={t} />
+          {jlocal.connected ? <JlocalStatus status={jlocal} t={t} /> : null}
         </div>
         <div className="header-tabs" role="tablist" aria-label={t('home.ways')}>
           {tabs.map((value) => (
@@ -559,6 +559,13 @@ export function Home() {
                   transition={reduceMotion ? { duration: 0 } : { type: 'spring', duration: 0.45, bounce: 0.2 }}
                 />
               ) : null}
+              <span className="tab-icon" aria-hidden="true">
+                {value === 'catalog' ? <Clapperboard size={19} />
+                  : value === 'recent' ? <History size={19} />
+                    : value === 'library' ? <Download size={19} />
+                      : value === 'manual' ? <FolderOpen size={19} />
+                        : <Activity size={19} />}
+              </span>
               <span className="season-tab-label">
                 {value === 'catalog' ? t('home.tabCatalog')
                   : value === 'recent' ? t('home.tabRecent')
@@ -577,7 +584,7 @@ export function Home() {
           <button type="button" className="header-plugins" onClick={() => setPluginsOpen(true)}>
             <Puzzle size={15} aria-hidden="true" /><span className="nav-label">{t('plugins.open')}</span>
           </button>
-          <JlocalDownload status={jlocal} t={t} />
+          {jlocal.connected ? <JlocalDownload status={jlocal} t={t} /> : null}
         </div>
         </LayoutGroup>
       </header>
@@ -588,7 +595,7 @@ export function Home() {
         ) : view === 'recent' ? (
           <RecentShelf entries={recents} layout="grid" onResume={resumeRecent} onDetails={recentDetails} t={t} />
         ) : view === 'library' ? (
-          <LibraryShelf t={t} onOpened={(roomId) => navigate(`/room/${roomId}`)} />
+          <LibraryShelf t={t} onOpened={(roomId) => navigate(`/room/${roomId}`)} onBrowse={() => showView('catalog')} />
         ) : view === 'catalog' ? (
           online
             ? <CatalogBrowser
