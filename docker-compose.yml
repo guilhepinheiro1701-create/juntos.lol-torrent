@@ -159,6 +159,12 @@ services:
       # abre". 10 Mbit/s mantem o enxame contente sem afogar a casa; com
       # internet de subida rapida, pode aumentar no .env.local.
       SS_WORKER_UPLOAD_MBIT: ${WORKER_UPLOAD_MBIT:-10}
+      # Teto do download de FUNDO (quando o worker enche o arquivo inteiro
+      # enquanto voce pausa, ou um "Baixar para offline"), em Mbit/s. Sem teto,
+      # um filme com centenas de seeds enchia a internet da casa e todo titulo
+      # seguinte falhava por falta de rede. O trecho que voce esta assistindo
+      # nunca e limitado. 0 = sem teto.
+      SS_WORKER_FILL_MBIT: ${WORKER_FILL_MBIT:-24}
       # Quantos titulos o worker prepara ao mesmo tempo. Ao sair de um, a vaga
       # dele e liberada na hora; com todas ocupadas, o titulo novo toma a vaga
       # do que foi visto ha mais tempo, entao trocar de serie nunca e recusado.

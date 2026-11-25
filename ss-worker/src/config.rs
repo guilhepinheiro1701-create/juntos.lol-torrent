@@ -38,6 +38,9 @@ pub struct WorkerConfig {
     pub per_torrent_peer_limit: usize,
     pub upnp: bool,
     pub upload_bps: u32,
+    /// Teto do download de fundo (encher o arquivo inteiro), em bytes/s; 0 =
+    /// sem teto. O trecho que alguem esta assistindo nunca e limitado.
+    pub fill_bps: u32,
     pub download_bps: u32,
     pub transfer_bps: u64,
     pub idle_grace: Duration,
@@ -187,6 +190,7 @@ impl WorkerConfig {
             // estrangulava a descida junto. Ponha um número aqui se a sua
             // internet sofre com a subida cheia.
             upload_bps: env_parse::<u32>("SS_WORKER_UPLOAD_MBIT", 0)? * 125_000,
+            fill_bps: env_parse::<u32>("SS_WORKER_FILL_MBIT", 24)? * 125_000,
             download_bps: env_parse::<u32>("SS_WORKER_DOWNLOAD_MBIT", 0)? * 125_000,
             transfer_bps: env_parse::<u64>("SS_WORKER_TRANSFER_MBIT", 0)? * 125_000,
             idle_grace: env_secs("SS_WORKER_IDLE_GRACE_SECS", 120)?,

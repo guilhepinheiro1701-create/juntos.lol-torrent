@@ -11,7 +11,7 @@ mod window;
 
 use std::collections::{HashMap, HashSet};
 use std::io::SeekFrom;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use parking_lot::Mutex;
 use std::time::{Duration, Instant};
@@ -73,6 +73,25 @@ pub struct Engine {
     /// metadados dela. Sem isto o release chegava antes do torrent, era
     /// ignorado, e o lease nascia depois orfao por 6 h, ocupando vaga.
     released_early: Mutex<HashMap<String, Instant>>,
+    /// Quantos titulos estao buscando a ficha agora. Enquanto houver algum,
+    /// os downloads de fundo dos outros param: o titulo novo precisa da
+    /// conexao inteira para achar os peers (era o "depois do primeiro, nenhum
+    /// torrent abre": o enchimento do primeiro saturava a internet).
+    resolving: Arc<AtomicUsize>,
+}
+
+/// Conta um titulo buscando a ficha enquanto viver.
+struct Resolving(Arc<AtomicUsize>);
+impl Resolving {
+    fn start(counter: &Arc<AtomicUsize>) -> Self {
+        counter.fetch_add(1, Ordering::SeqCst);
+        Self(counter.clone())
+    }
+}
+impl Drop for Resolving {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -321,6 +340,7 @@ impl Engine {
             session,
             torrents: Mutex::new(HashMap::new()),
             released_early: Mutex::new(HashMap::new()),
+            resolving: Arc::new(AtomicUsize::new(0)),
             kept,
             disk: DiskAccountant::new(cfg.disk_quota_bytes, cfg.high_water_bytes(), cfg.places.paths()),
             transients: Arc::new(tokio::sync::Semaphore::new(cfg.max_leases * 2)),
@@ -391,6 +411,7 @@ impl Engine {
         // reinicio do worker, ate um filme inteiro no disco esperava a ficha
         // chegar pela rede - e com o enxame mudo, falhava em 90 s.
         let cached = metainfo::load(&self.cfg.data_dir, &infohash);
+        let _resolving = cached.is_none().then(|| Resolving::start(&self.resolving));
         let source = match &cached {
             Some(bytes) => AddTorrent::from_bytes(bytes.clone()),
             None => AddTorrent::from_url(&magnet),
@@ -928,7 +949,9 @@ impl Engine {
             // Ninguem lendo e nada guardado: o torrent so espera o reaper.
             // Encher o arquivo agora so disputaria a banda com o proximo
             // titulo (era o que fazia o segundo filme nao abrir).
-            let wanted = !entry.reclaimable();
+            // Um titulo novo esta abrindo: o fundo dos outros espera (o que
+            // foi guardado para offline tambem - volta sozinho em segundos).
+            let wanted = !entry.reclaimable() && self.resolving.load(Ordering::SeqCst) == 0;
             let Some(index) = entry.selected_file else { return };
             let playhead = entry.slots.get(&(index, Prio::Playhead)).cloned();
             let quiet = match &playhead {
@@ -960,6 +983,11 @@ impl Engine {
         };
         let fits = self.disk.fits_replacing(infohash, full);
         let next = fill::decide(now, fill::Reader { quiet, window_have, wanted }, fits);
+        // O teto vale so enquanto enche o fundo; o trecho assistido e livre.
+        if let Some(live) = handle.live() {
+            let cap = if next == Fill::Filling { std::num::NonZeroU32::new(self.cfg.fill_bps) } else { None };
+            live.set_download_bps(cap);
+        }
         if next == now {
             return;
         }

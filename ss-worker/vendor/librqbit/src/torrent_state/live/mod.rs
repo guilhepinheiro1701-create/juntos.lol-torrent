@@ -217,6 +217,12 @@ pub struct TorrentStateLive {
 }
 
 impl TorrentStateLive {
+    /// ss-worker: muda o teto de download deste torrent em andamento (o
+    /// enchimento de fundo nao pode saturar a internet da casa).
+    pub fn set_download_bps(&self, bps: Option<NonZeroU32>) {
+        self.ratelimits.set_download_bps(bps);
+    }
+
     pub(crate) fn new(
         paused: TorrentStatePaused,
         fatal_errors_tx: tokio::sync::oneshot::Sender<anyhow::Error>,
