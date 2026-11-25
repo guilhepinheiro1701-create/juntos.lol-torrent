@@ -67,6 +67,11 @@ pub struct Engine {
     permits_in_use: Arc<AtomicU64>,
     releasing: bool,
     transients: Arc<tokio::sync::Semaphore>,
+    /// Leases soltos antes de existirem: o site cancela uma fonte (a que
+    /// perdeu a disputa, ou o "Cancelar") enquanto o worker ainda busca os
+    /// metadados dela. Sem isto o release chegava antes do torrent, era
+    /// ignorado, e o lease nascia depois orfao por 6 h, ocupando vaga.
+    released_early: Mutex<HashMap<String, Instant>>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -314,6 +319,7 @@ impl Engine {
         let engine = Arc::new(Self {
             session,
             torrents: Mutex::new(HashMap::new()),
+            released_early: Mutex::new(HashMap::new()),
             kept,
             disk: DiskAccountant::new(cfg.disk_quota_bytes, cfg.high_water_bytes(), cfg.places.paths()),
             transients: Arc::new(tokio::sync::Semaphore::new(cfg.max_leases * 2)),
@@ -402,7 +408,7 @@ impl Engine {
                         let entry = map
                             .entry(infohash.clone())
                             .or_insert_with(|| self.fresh_entry(&infohash, handle.clone()));
-                        entry.take_lease(lease_id);
+                        self.claim_lease(entry, lease_id);
                     }
                     return admission::lease_info(&handle).map_err(Rejection::Internal);
                 }
@@ -442,7 +448,7 @@ impl Engine {
         let entry = map
             .entry(infohash.clone())
             .or_insert_with(|| self.fresh_entry(&infohash, handle.clone()));
-        entry.take_lease(lease_id);
+        self.claim_lease(entry, lease_id);
         Ok(info)
     }
 
@@ -458,7 +464,7 @@ impl Engine {
     fn attach_existing(&self, infohash: &str, lease_id: &str) -> Option<Handle> {
         let mut map = self.torrents.lock();
         let entry = map.get_mut(infohash)?;
-        entry.take_lease(lease_id);
+        self.claim_lease(entry, lease_id);
         Some(entry.handle.clone())
     }
 
@@ -531,8 +537,13 @@ impl Engine {
         let infohash = infohash.to_ascii_lowercase();
         let drop_fill = {
             let mut map = self.torrents.lock();
-            let Some(entry) = map.get_mut(&infohash) else { return };
-            entry.leases.remove(lease_id);
+            let Some(entry) = map.get_mut(&infohash) else {
+                self.remember_early_release(lease_id);
+                return;
+            };
+            if entry.leases.remove(lease_id).is_none() {
+                self.remember_early_release(lease_id);
+            }
             entry.touch();
             if entry.keep {
                 // Guardado: o fill continua, e é ele que segura os bytes.
@@ -547,6 +558,23 @@ impl Engine {
         if drop_fill {
             self.drop_to_pins(&infohash);
         }
+    }
+
+    fn remember_early_release(&self, lease_id: &str) {
+        let mut early = self.released_early.lock();
+        early.retain(|_, at| at.elapsed() < Duration::from_secs(600));
+        early.insert(lease_id.to_string(), Instant::now());
+    }
+
+    /// Da o lease a entrada, a nao ser que ele ja tenha sido solto antes de
+    /// existir (ai a entrada fica sem ele e o reaper a recolhe).
+    fn claim_lease(&self, entry: &mut Entry, lease_id: &str) {
+        if self.released_early.lock().remove(lease_id).is_some() {
+            tracing::info!(lease = %lease_id, "lease released before it existed; not taken");
+            entry.touch();
+            return;
+        }
+        entry.take_lease(lease_id);
     }
 
     fn drop_to_pins(&self, infohash: &str) {

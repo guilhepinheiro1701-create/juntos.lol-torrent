@@ -74,6 +74,21 @@ if ($LASTEXITCODE -ne 0) {
     Fim 1
 }
 
+# O container tem de estar rodando a imagem que acabou de ser montada. Ja
+# aconteceu de o build trocar a imagem e o container seguir na antiga (o
+# diagnostico mostrava "sha256:..." no lugar do nome), e ai a correcao nova
+# simplesmente nao rodava. Conferido servico a servico; o velho e recriado.
+foreach ($servico in 'app', 'worker') {
+    $cid = @(& docker compose --env-file .env.local ps -q $servico 2>$null | ForEach-Object { "$_".Trim() } | Where-Object { $_ -match '^[0-9a-f]{12,64}$' })
+    if ($cid.Count -eq 0) { continue }
+    $rodando = @(& docker inspect --format '{{.Image}}' $cid[0] 2>$null | ForEach-Object { "$_".Trim() })
+    $montada = @(& docker image inspect --format '{{.Id}}' "juntos-local-$servico" 2>$null | ForEach-Object { "$_".Trim() })
+    if ($rodando.Count -gt 0 -and $montada.Count -gt 0 -and $rodando[0] -ne $montada[0]) {
+        Passo "O $servico estava na versao antiga; trocando..."
+        & docker compose --env-file .env.local up -d --no-deps --force-recreate $servico
+    }
+}
+
 # `up -d` devolve sucesso assim que manda subir, mesmo que o servidor morra um
 # segundo depois. Entao "esta de pe" e "respondeu" sao duas perguntas, e esta
 # espera faz as duas: quem so faz a segunda fica oitenta segundos olhando para
