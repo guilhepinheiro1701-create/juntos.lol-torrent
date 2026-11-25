@@ -68,6 +68,21 @@ func (k *Keeper) Forget(roomID string) {
 	delete(k.seen, roomID)
 }
 
+// Left records that the viewer closed the room: it stops counting as
+// watched right away, so its remux slot can go to the next title.
+func (k *Keeper) Left(roomID string) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.seen[roomID] = time.Time{}
+}
+
+// SeenAt is when the room was last heard from; zero if never, or left.
+func (k *Keeper) SeenAt(roomID string) time.Time {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.seen[roomID]
+}
+
 // watched reports whether the room was seen recently enough to leave alone.
 func (k *Keeper) watched(roomID string, now time.Time) bool {
 	k.mu.Lock()

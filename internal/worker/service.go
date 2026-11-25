@@ -591,6 +591,24 @@ func (s *Service) CancelRoom(roomID string) {
 	}
 }
 
+// LeaveRoom is CancelRoom for a viewer who closed the room: a job they
+// asked to keep downloading stays, the rest is released.
+func (s *Service) LeaveRoom(roomID string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ids, err := s.Registry.JobsForRoom(ctx, roomID)
+	if err != nil {
+		return
+	}
+	for _, id := range ids {
+		job, err := s.Registry.LoadJob(ctx, id)
+		if err != nil || job == nil || job.Keep {
+			continue
+		}
+		s.release(ctx, job)
+	}
+}
+
 // Sweep releases jobs nobody renewed within idle, and fails jobs whose
 // worker has gone quiet.
 func (s *Service) Sweep(ctx context.Context, idle time.Duration) {

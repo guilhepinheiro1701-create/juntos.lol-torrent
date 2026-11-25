@@ -1783,7 +1783,7 @@ impl PeerHandler {
                         // Example:
                         // someone stole a piece from us, and then died, the piece became "needed" again, and we reserved it
                         // all before the piece request was processed by us.
-                        warn!(
+                        debug!(
                             id = self.state.shared.id,
                             info_hash = ?self.state.shared.info_hash,
                             addr = ?self.addr,

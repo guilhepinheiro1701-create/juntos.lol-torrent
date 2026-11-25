@@ -62,7 +62,7 @@ import {
   torrentJobFor,
 } from '../upload'
 import { expectedPositionMs } from '../player/position'
-import { jobProgress, keepTorrent, reportPosition, torrentKept } from '../remoteTorrent'
+import { jobProgress, keepTorrent, leaveRoom, reportPosition, torrentKept } from '../remoteTorrent'
 import { forget, libraryEntry, remember } from '../library'
 import type { TorrentStats } from '../torrent'
 
@@ -415,7 +415,7 @@ function ConnectedRoom({ room }: { room: RoomInfo }) {
     const tell = () => { void reportPosition(room.id, expectedPositionMs(positionRef.current, Date.now())) }
     tell()
     const timer = window.setInterval(tell, POSITION_REPORT_MS)
-    return () => { window.clearInterval(timer); tell() }
+    return () => { window.clearInterval(timer); leaveRoom(room.id) }
   }, [room.id])
 
   useEffect(() => subscribeUploadProgress(room.id, setUploadProgress), [room.id, liveRoom.mediaGeneration])

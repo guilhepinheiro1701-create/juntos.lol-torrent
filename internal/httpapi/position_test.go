@@ -89,3 +89,22 @@ func TestPositionSurvivesNilHooks(t *testing.T) {
 	require.Equal(t, http.StatusNoContent,
 		postPosition(t, e, "r1", `{"ownerToken":"owner-secret","positionMs":5000}`).Code)
 }
+
+func postLeave(e *gin.Engine, roomID, body string) int {
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/rooms/"+roomID+"/leave", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	e.ServeHTTP(w, req)
+	return w.Code
+}
+
+func TestLeaveStopsTheRoomsProductionOnlyForItsOwner(t *testing.T) {
+	store := newTestStore(t)
+	var left []string
+	e := positionRoom(t, store, PositionHooks{Leave: func(id string) { left = append(left, id) }})
+
+	require.Equal(t, http.StatusForbidden, postLeave(e, "r1", `{"ownerToken":"guessed"}`))
+	require.Empty(t, left)
+	require.Equal(t, http.StatusNoContent, postLeave(e, "r1", `{"ownerToken":"owner-secret"}`))
+	require.Equal(t, []string{"r1"}, left)
+}

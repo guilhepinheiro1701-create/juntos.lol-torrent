@@ -151,3 +151,13 @@ func TestReclaimForgetsTheRoomItRemoved(t *testing.T) {
 	keeper.mu.Unlock()
 	require.False(t, held)
 }
+
+func TestLeftRoomStopsCountingAsWatched(t *testing.T) {
+	k := &Keeper{idleAfter: time.Minute, seen: map[string]time.Time{}}
+	k.Seen("r1")
+	require.True(t, k.watched("r1", time.Now()))
+	require.False(t, k.SeenAt("r1").IsZero())
+	k.Left("r1")
+	require.False(t, k.watched("r1", time.Now()))
+	require.True(t, k.SeenAt("r1").IsZero())
+}

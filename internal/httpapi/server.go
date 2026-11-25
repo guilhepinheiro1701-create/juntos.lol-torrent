@@ -81,7 +81,11 @@ func NewServer(cfg config.Config, store *room.Store, opts ...ServerOption) *gin.
 	for _, apply := range opts {
 		apply(&options)
 	}
-	r := gin.Default()
+	// Every HLS segment is a presign, a PUT and a publish: logged, they drown
+	// everything else (and the diagnostic only shows the last lines). Those
+	// are logged only when they fail.
+	r := gin.New()
+	r.Use(gin.LoggerWithConfig(gin.LoggerConfig{Skip: quietRequest}), gin.Recovery())
 	if err := r.SetTrustedProxies(nil); err != nil {
 		panic("configure trusted proxies: " + err.Error())
 	}
@@ -159,4 +163,17 @@ func registerFrontend(r *gin.Engine, webDir string) {
 		c.Header("Cache-Control", "no-store")
 		c.File(filepath.Join(webDir, "index.html"))
 	})
+}
+
+func quietRequest(c *gin.Context) bool {
+	if c.Writer.Status() >= 400 {
+		return false
+	}
+	p := c.Request.URL.Path
+	return strings.HasPrefix(p, "/media-objects/") ||
+		strings.HasSuffix(p, "/client-media/presign") ||
+		strings.HasSuffix(p, "/client-media/publish") ||
+		strings.HasSuffix(p, "/subtitles/fleet") ||
+		strings.HasSuffix(p, "/position") ||
+		p == "/healthz"
 }

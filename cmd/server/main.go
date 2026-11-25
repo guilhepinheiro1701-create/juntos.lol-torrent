@@ -118,6 +118,10 @@ func main() {
 		}
 	}
 	remuxOrch := worker.NewRemuxOrchestrator(torrents, store, cfg)
+	// A full worker takes the slot from a left or idle room (or, failing
+	// that, the one watched longest ago) instead of refusing a new title.
+	remuxOrch.SeenAt = keeper.SeenAt
+	remuxOrch.Released = torrents.LeaveRoom
 	keeper.OnReclaimed = func(roomID string) {
 		remuxOrch.CancelRoom(roomID)
 		torrents.CancelRoom(roomID)
@@ -138,7 +142,12 @@ func main() {
 			remuxOrch.CancelRoom(roomID)
 			torrents.CancelRoom(roomID)
 		}}),
-		httpapi.WithPosition(httpapi.PositionHooks{Follow: remuxOrch.Follow, Seen: keeper.Seen}),
+		httpapi.WithPosition(httpapi.PositionHooks{Follow: remuxOrch.Follow, Seen: keeper.Seen,
+			Leave: func(roomID string) {
+				keeper.Left(roomID)
+				remuxOrch.CancelRoom(roomID)
+				torrents.LeaveRoom(roomID)
+			}}),
 		httpapi.WithTorrents(httpapi.TorrentAccess{Sessions: sessions, Quota: quota, Service: torrents,
 			Remux: remuxOrch}, workerHub.HandleLink),
 		httpapi.WithPluginFetch(sessions, quota),

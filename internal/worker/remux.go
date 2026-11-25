@@ -68,6 +68,11 @@ type RemuxOrchestrator struct {
 	Store   *room.Store
 	Cfg     config.Config
 	Notify  func(roomID string)
+	// SeenAt is when the room's viewer last reported (zero once they left);
+	// nil never takes a slot from anyone. Released is told when a room's
+	// slot is taken, to release the rest of what it holds.
+	SeenAt   func(roomID string) time.Time
+	Released func(roomID string)
 
 	mu      sync.Mutex
 	byRoom  map[string]*sync.Mutex
@@ -157,6 +162,72 @@ func (o *RemuxOrchestrator) capableWorker(workerID string) bool {
 	return capability.Compatible() && capability.ActiveRuns < capability.Slots
 }
 
+// healthyRemuxWorker is capableWorker without the free-slot condition.
+func (o *RemuxOrchestrator) healthyRemuxWorker(workerID string) bool {
+	held, ok := o.Service.Registry.Get(workerID)
+	return ok && held.Healthy(time.Now()) && held.Heartbeat.Remux.Compatible()
+}
+
+// freeSlot makes room on a full worker for a new title. Rooms nobody is in
+// any more go first, all of them; if every room is still being watched, the
+// one heard from longest ago gives way — the newest title is what the viewer
+// wants now, and browsing title after title must never be refused. It
+// answers how many productions it ended.
+func (o *RemuxOrchestrator) freeSlot(ctx context.Context, workerID, keepRoom string) int {
+	if o.SeenAt == nil {
+		return 0
+	}
+	rooms, err := o.rdb().SMembers(ctx, remuxRoomsKey(workerID)).Result()
+	if err != nil {
+		return 0
+	}
+	type live struct {
+		roomID string
+		seen   time.Time
+	}
+	var watched []live
+	freed := 0
+	for _, roomID := range rooms {
+		if roomID == keepRoom {
+			continue
+		}
+		run, err := o.LoadRun(ctx, roomID)
+		if err != nil || run == nil || run.WorkerID != workerID || remux.TerminalState(run.State) {
+			continue
+		}
+		seen := o.SeenAt(roomID)
+		if time.Since(seen) < abandonedAfter {
+			watched = append(watched, live{roomID, seen})
+			continue
+		}
+		o.takeSlot(ctx, roomID, keepRoom, "abandoned")
+		freed++
+	}
+	if freed == 0 && len(watched) > 0 {
+		oldest := watched[0]
+		for _, w := range watched[1:] {
+			if w.seen.Before(oldest.seen) {
+				oldest = w
+			}
+		}
+		o.takeSlot(ctx, oldest.roomID, keepRoom, "least recently watched")
+		freed++
+	}
+	return freed
+}
+
+// abandonedAfter: a viewer in a room reports every 10 s, so three missed
+// reports mean nobody is there.
+const abandonedAfter = 25 * time.Second
+
+func (o *RemuxOrchestrator) takeSlot(ctx context.Context, roomID, forRoom, why string) {
+	slog.InfoContext(ctx, "remux slot taken for a new title", "room_id", roomID, "for_room", forRoom, "why", why)
+	o.CancelRoom(roomID)
+	if o.Released != nil {
+		o.Released(roomID)
+	}
+}
+
 // Start reserves the room's producer claim and dispatches the first run.
 // Authorization is the room's ownerToken (bootstrap) or a connected
 // controller's capability; both require the session owning the torrent job.
@@ -203,6 +274,13 @@ func (o *RemuxOrchestrator) Start(ctx context.Context, sessionID, jobID string, 
 		return nil, ErrRemuxDenied
 	}
 
+	// Before this room's lock: freeing takes other rooms' locks, and two
+	// starts freeing each other's rooms must not each hold one of them.
+	freed := false
+	if !o.capableWorker(job.WorkerID) {
+		freed = o.freeSlot(ctx, job.WorkerID, req.RoomID) > 0
+	}
+
 	lock := o.roomLock(req.RoomID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -220,7 +298,7 @@ func (o *RemuxOrchestrator) Start(ctx context.Context, sessionID, jobID string, 
 		}
 	}
 
-	if !o.capableWorker(job.WorkerID) {
+	if !o.capableWorker(job.WorkerID) && !(freed && o.healthyRemuxWorker(job.WorkerID)) {
 		return nil, ErrRemuxUnavailable
 	}
 	if youtube {
@@ -271,7 +349,20 @@ func (o *RemuxOrchestrator) Start(ctx context.Context, sessionID, jobID string, 
 	if err := o.Store.SetProducerRun(ctx, req.RoomID, run.RunID); err != nil {
 		slog.WarnContext(ctx, "set producer run failed", "room_id", req.RoomID, "error", err)
 	}
-	if err := o.dispatchStart(ctx, run); err != nil {
+	err = o.dispatchStart(ctx, run)
+	// A slot just freed is only free once the worker has processed the
+	// cancel, and its heartbeat still counts the old run for a moment.
+	for tries := 0; err != nil && strings.Contains(err.Error(), "remux_busy") && tries < 5; tries++ {
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Second):
+		}
+		if ctx.Err() != nil {
+			break
+		}
+		err = o.dispatchStart(ctx, run)
+	}
+	if err != nil {
 		o.deleteRun(ctx, req.RoomID)
 		_ = o.Store.ReleaseUpload(ctx, req.RoomID, claim)
 		return nil, err

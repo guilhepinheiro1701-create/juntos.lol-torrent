@@ -198,7 +198,7 @@ impl WorkerConfig {
             first_byte_deadline: env_secs("SS_WORKER_FIRST_BYTE_SECS", 30)?,
             stall_deadline: env_secs("SS_WORKER_STALL_SECS", 20)?,
             drain_deadline: env_secs("SS_WORKER_DRAIN_SECS", 30)?,
-            remux_slots: env_parse("SS_WORKER_REMUX_SLOTS", 1)?,
+            remux_slots: env_parse("SS_WORKER_REMUX_SLOTS", 3)?,
             live_slots: env_parse("SS_WORKER_LIVE_SLOTS", 2)?,
             ffmpeg_path: env("SS_WORKER_FFMPEG").unwrap_or_else(|| "ffmpeg".into()),
             ffprobe_path: env("SS_WORKER_FFPROBE").unwrap_or_else(|| "ffprobe".into()),

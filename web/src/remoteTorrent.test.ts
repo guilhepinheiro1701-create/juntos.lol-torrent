@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { keepTorrent, parseMagnet, probeWorkers } from './remoteTorrent'
+import { keepTorrent, leaveRoom, parseMagnet, probeWorkers } from './remoteTorrent'
 
 describe('parseMagnet', () => {
   it('reads a hex hash, trackers and the name', () => {
@@ -105,5 +105,26 @@ describe('keepTorrent, o modo offline', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'not_listed' }), { status: 409 })))
 
     await expect(keepTorrent('j1', true)).rejects.toThrow()
+  })
+})
+
+describe('leaveRoom', () => {
+  afterEach(() => { vi.unstubAllGlobals(); localStorage.clear() })
+
+  it('tells the server the room was left, with its owner token, surviving the unload', () => {
+    localStorage.setItem('ss.owner.ROOM1', 'tok')
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+    leaveRoom('ROOM1')
+    expect(fetchMock).toHaveBeenCalledWith('/api/rooms/ROOM1/leave', expect.objectContaining({
+      method: 'POST', keepalive: true, body: JSON.stringify({ ownerToken: 'tok' }),
+    }))
+  })
+
+  it('says nothing for a room it does not own', () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    leaveRoom('OTHER')
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

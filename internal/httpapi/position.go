@@ -19,9 +19,14 @@ const maxPositionBodyBytes = 1 << 10
 //
 // Seen keeps the room alive. Abandonment is no longer "nobody is connected" —
 // it is "nobody has said anything for a while".
+//
+// Leave is the viewer closing the room: whatever the fleet is still producing
+// for it stops now, instead of holding the worker's only remux slot until the
+// janitor gets to it — which is what made the second title fail to start.
 type PositionHooks struct {
 	Follow func(roomID string, positionMs int64)
 	Seen   func(roomID string)
+	Leave  func(roomID string)
 }
 
 type positionRequest struct {
@@ -34,6 +39,42 @@ type positionRequest struct {
 // RegisterPositionRoute mounts the viewer's position report.
 func RegisterPositionRoute(rg *gin.RouterGroup, store *room.Store, authorizer memberAuthorizer, hooks PositionHooks) {
 	rg.POST("/rooms/:id/position", reportPosition(store, authorizer, hooks))
+	rg.POST("/rooms/:id/leave", leaveRoom(store, authorizer, hooks))
+}
+
+type leaveRequest struct {
+	OwnerToken string `json:"ownerToken"`
+	MemberID   string `json:"memberId"`
+	Capability string `json:"capability"`
+}
+
+// leaveRoom answers 204 for a room that is already gone: leaving twice, or
+// after the janitor, is not an error the viewer can do anything about.
+func leaveRoom(store *room.Store, authorizer memberAuthorizer, hooks PositionHooks) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		roomID := c.Param("id")
+		if !validMediaRoomID(roomID) {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxPositionBodyBytes)
+		var req leaveRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+			return
+		}
+		storedRoom, ok := loadLiveRoom(c, store, roomID)
+		if !ok {
+			return
+		}
+		if !authorizeController(c, storedRoom, authorizer, req.OwnerToken, req.MemberID, req.Capability) {
+			return
+		}
+		if hooks.Leave != nil {
+			hooks.Leave(roomID)
+		}
+		c.Status(http.StatusNoContent)
+	}
 }
 
 func reportPosition(store *room.Store, authorizer memberAuthorizer, hooks PositionHooks) gin.HandlerFunc {

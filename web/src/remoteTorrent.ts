@@ -584,3 +584,21 @@ export async function reportPosition(roomId: string, positionMs: number): Promis
     })
   } catch {}
 }
+
+/**
+ * Says the viewer closed the room. The server stops what the worker is still
+ * preparing for it right away, so the next title gets the slot; without this
+ * the abandoned room held it for minutes and the next one was refused.
+ */
+export function leaveRoom(roomId: string): void {
+  const ownerToken = ownerTokenFor(roomId)
+  if (!ownerToken) return
+  try {
+    void fetch(`/api/rooms/${encodeURIComponent(roomId)}/leave`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ownerToken }),
+      keepalive: true,
+    }).catch(() => undefined)
+  } catch {}
+}

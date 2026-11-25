@@ -258,7 +258,7 @@ async fn write_output(
     Path((cap, name)): Path<(String, String)>,
     request: Request,
 ) -> Response {
-    tracing::info!(name = %name, "remux output request");
+    tracing::debug!(name = %name, "remux output request");
     let Some(sink) = state.outputs.lock().get(&cap).cloned() else {
         return StatusCode::NOT_FOUND.into_response();
     };
