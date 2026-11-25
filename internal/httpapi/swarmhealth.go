@@ -17,6 +17,8 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -46,7 +48,7 @@ const (
 	maxHealthHashes = 300
 	// Um pacote de scrape UDP leva ate ~74 hashes (BEP 15); o resto vai em
 	// mais pacotes na mesma conexao.
-	scrapeChunk       = 70
+	scrapeChunk       = 50
 	maxExtraTrackers  = 6
 	scrapeTimeout     = 3 * time.Second
 	healthCacheMaxAge = 2 * time.Minute
@@ -65,6 +67,16 @@ type SwarmHealthResult struct {
 	// Veio do cache (perguntado ha menos de 2 min): Asked/Answered nao se aplicam.
 	Cached bool                  `json:"cached,omitempty"`
 	Swarms map[string]SwarmCount `json:"swarms"`
+	// Por tracker: respondeu? quantos torrents com seed > 0? E o que o
+	// diagnostico mostra para saber em quem a conferencia esta se apoiando.
+	Trackers []TrackerReport `json:"trackers,omitempty"`
+}
+
+type TrackerReport struct {
+	Tracker string `json:"tracker"`
+	OK      bool   `json:"ok"`
+	Seeded  int    `json:"seeded"`
+	Error   string `json:"error,omitempty"`
 }
 
 // scrapeFunc existe para os testes trocarem a rede por um tracker falso.
@@ -95,8 +107,9 @@ func (h *SwarmHealth) Check(ctx context.Context, hashes []string, extra []string
 	result := SwarmHealthResult{Asked: len(trackers), Swarms: map[string]SwarmCount{}}
 
 	type answer struct {
-		counts map[string]SwarmCount
-		err    error
+		tracker string
+		counts  map[string]SwarmCount
+		err     error
 	}
 	answers := make(chan answer, len(trackers))
 	for _, tracker := range trackers {
@@ -104,14 +117,23 @@ func (h *SwarmHealth) Check(ctx context.Context, hashes []string, extra []string
 			c, cancel := context.WithTimeout(ctx, scrapeTimeout)
 			defer cancel()
 			counts, err := h.scrape(c, tracker, hashes)
-			answers <- answer{counts, err}
+			answers <- answer{tracker, counts, err}
 		}(tracker)
 	}
 	for range trackers {
 		a := <-answers
+		report := TrackerReport{Tracker: strings.TrimPrefix(a.tracker, "udp://"), OK: a.err == nil}
 		if a.err != nil {
+			report.Error = a.err.Error()
+			result.Trackers = append(result.Trackers, report)
 			continue
 		}
+		for _, count := range a.counts {
+			if count.Seeders > 0 {
+				report.Seeded++
+			}
+		}
+		result.Trackers = append(result.Trackers, report)
 		result.Answered++
 		for hash, count := range a.counts {
 			best := result.Swarms[hash]
@@ -124,7 +146,18 @@ func (h *SwarmHealth) Check(ctx context.Context, hashes []string, extra []string
 			result.Swarms[hash] = best
 		}
 	}
-	if result.Answered > 0 {
+	seeded := 0
+	for _, count := range result.Swarms {
+		if count.Seeders > 0 {
+			seeded++
+		}
+	}
+	slog.Info("swarm health", "hashes", len(hashes), "asked", result.Asked, "answered", result.Answered,
+		"seeded", seeded, "trackers", trackerSummary(result.Trackers))
+	// Tudo zerado com dezenas de fontes nao e um titulo morto, e uma
+	// conferencia que nao funcionou (os trackers grandes nao responderam
+	// direito). Nao vai para o cache, para a proxima tentar de novo.
+	if result.Answered > 0 && (seeded > 0 || len(hashes) < 5) {
 		h.remember(result.Swarms, hashes)
 	}
 	return result
@@ -328,4 +361,16 @@ func (h *SwarmHealth) handle(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, h.Check(c.Request.Context(), hashes, req.Trackers))
+}
+
+func trackerSummary(reports []TrackerReport) string {
+	parts := make([]string, 0, len(reports))
+	for _, r := range reports {
+		if r.OK {
+			parts = append(parts, fmt.Sprintf("%s=ok(%d com seed)", r.Tracker, r.Seeded))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s=falhou(%s)", r.Tracker, r.Error))
+		}
+	}
+	return strings.Join(parts, " ")
 }

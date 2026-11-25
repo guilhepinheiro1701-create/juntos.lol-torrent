@@ -73,6 +73,29 @@ Rodar 'Teste de rede BitTorrent (dentro da rede do worker)' {
             docker run -i --rm --network "container:$($id[0].Trim())" python:3.12-alpine python - @hashes
     }
 }
+Rodar 'Conferencia de seeds do site (por tracker)' {
+    # O que o servidor conferiu nas ultimas vezes que um titulo foi aberto:
+    # quais trackers responderam e quantos torrents tinham seed em cada um.
+    $ultimas = @(docker compose --env-file .env.local logs --no-color --tail 2000 app 2>$null |
+        Select-String -Pattern 'swarm health' | Select-Object -Last 4)
+    if ($ultimas.Count -eq 0) { '(nenhuma conferencia nos logs ainda - abra um titulo antes)' }
+    else { $ultimas | ForEach-Object { ("$_" -replace '^app-1\s+\|\s+', '') } }
+    # E uma conferencia agora, com os torrents tentados, direto no servidor.
+    $tentados = @(docker compose --env-file .env.local logs --no-color --tail 2000 app 2>$null |
+        Select-String -Pattern 'infoHash=([0-9a-fA-F]{40})' -AllMatches |
+        ForEach-Object { $_.Matches } | ForEach-Object { $_.Groups[1].Value.ToLower() } | Select-Object -Unique -Last 8)
+    if ($tentados.Count -gt 0) {
+        try {
+            $corpo = @{ infoHashes = $tentados; trackers = @() } | ConvertTo-Json
+            $r = Invoke-RestMethod -UseBasicParsing -Method Post -Uri 'http://localhost:8099/api/torrents/health' -ContentType 'application/json' -Body $corpo -TimeoutSec 20
+            "agora: $($r.answered) de $($r.asked) trackers responderam"
+            foreach ($t in @($r.trackers)) {
+                if ($t.ok) { "  ok     $($t.tracker)  ($($t.seeded) com seed)" } else { "  FALHOU $($t.tracker)  ($($t.error))" }
+            }
+            foreach ($p in $r.swarms.PSObject.Properties) { "  $($p.Name.Substring(0, 10))  seeds=$($p.Value.seeders)" }
+        } catch { "nao consegui perguntar ao servidor: $($_.Exception.Message)" }
+    }
+}
 Rodar 'Conexoes TCP do worker agora' {
     # Quantas conexoes o worker tem abertas, por estado. Muitas em SYN_SENT
     # (tentando conectar e sem resposta) e poucas ESTABLISHED e o retrato de

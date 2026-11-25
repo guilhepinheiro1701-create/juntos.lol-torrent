@@ -53,4 +53,17 @@ describe('fetchSwarmHealth', () => {
     expect(result.unreachable).toBe(false)
     expect(result.counts.get('a'.repeat(40))?.seeders).toBe(2)
   })
+
+  // O caso do Homem-Aranha: 425 seeds no tracker e a tela dizendo que nenhuma
+  // fonte tinha seed. Tudo zerado e uma conferencia que falhou, nao um titulo
+  // morto: vale o numero dos plugins.
+  it('ignores a check that came back all zeros', async () => {
+    const zeros = Object.fromEntries('abcdef'.split('').map((h) => [h.repeat(40), { seeders: 0, leechers: 0 }]))
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ asked: 5, answered: 1, swarms: zeros }))))
+    const streams = 'abcdef'.split('').map((h, i) => s(`s${i}`, h, 100 - i))
+    const result = await fetchSwarmHealth(streams)
+    expect(result.counts.size).toBe(0)
+    expect(result.unreachable).toBe(false)
+    expect(rankStreams(streams, 'auto', 'auto', true, result)[0].label).toBe('s0')
+  })
 })

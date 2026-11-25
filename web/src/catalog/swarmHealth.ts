@@ -50,6 +50,14 @@ export async function fetchSwarmHealth(streams: CatalogStream[], signal?: AbortS
   if (answered) {
     for (const [hash, count] of Object.entries(body.swarms ?? {})) counts.set(hash.toLowerCase(), count)
   }
+  // Zero seed em TODAS as fontes de um titulo com varias delas nao e um
+  // titulo morto: e a conferencia que falhou (os trackers grandes nao
+  // responderam direito). Era isso que fazia o site dizer "nenhuma fonte tem
+  // seeds" para um filme com 425 e escolher justamente as mortas. Nesse caso
+  // a conferencia nao conta, e valem os numeros dos plugins, como antes.
+  if (counts.size >= 5 && [...counts.values()].every((count) => count.seeders === 0)) {
+    return { loading: false, counts: new Map(), unreachable: false }
+  }
   return { loading: false, counts, unreachable: !answered && (body.asked ?? 0) > 0 }
 }
 
