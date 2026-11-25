@@ -1,4 +1,5 @@
 import { openTorrent, type TorrentSession, type TorrentVideoFile } from '../torrent'
+import { TorrentRejectedError } from '../remoteTorrent'
 import { buildMagnet, type CatalogStream, type StreamLocation, type StreamTarget } from './streams'
 
 type TorrentLocation = Extract<StreamLocation, { kind: 'torrent' }>
@@ -19,11 +20,32 @@ export function episodePattern(season: number, episode: number): RegExp {
  * The addon's filename hint wins; its `fileIdx` is believed last, because it is
  * 0 on most season packs. Falls back to the largest file.
  */
+/** Algum SxxEyy / 1x02 no nome: o arquivo diz qual episodio e. */
+const ANY_EPISODE = /(?:s\d{1,2}[\s._-]*(?:e|ep)\d{1,3}|(?<!\d)\d{1,2}x\d{2,3})(?!\d)/i
+
+/**
+ * Num episodio pedido, um torrent cujos arquivos dizem ser OUTROS episodios
+ * (pacote de outra temporada, episodio vizinho) nao serve: tocar o primeiro
+ * arquivo era tocar o episodio errado sem avisar. Arquivos sem SxxEyy no nome
+ * passam (filmes, releases sem marcacao).
+ */
+export function wrongEpisode(files: TorrentVideoFile[], location: TorrentLocation, target?: StreamTarget): boolean {
+  if (target?.season == null || target?.episode == null) return false
+  const pattern = episodePattern(target.season, target.episode)
+  if (location.fileName && pattern.test(basename(location.fileName))) {
+    const wanted = basename(location.fileName).toLowerCase()
+    if (files.some((file) => basename(file.path).toLowerCase() === wanted)) return false
+  }
+  if (files.some((file) => pattern.test(file.path))) return false
+  return files.length > 0 && files.every((file) => ANY_EPISODE.test(basename(file.path)))
+}
+
 export function pickStreamFile(
   files: TorrentVideoFile[],
   location: TorrentLocation,
   target?: StreamTarget,
 ): TorrentVideoFile | undefined {
+  if (wrongEpisode(files, location, target)) return undefined
   if (files.length <= 1) return files[0]
 
   if (location.fileName) {
@@ -59,7 +81,8 @@ export async function openCatalogStream(
   const file = pickStreamFile(session.files, location, target)
   if (!file) {
     session.destroy()
-    throw new Error('stream torrent has no playable video file')
+    // Erros de torrent, nao genericos: a fila de fontes passa para a proxima.
+    throw new TorrentRejectedError(wrongEpisode(session.files, location, target) ? 'episode_missing' : 'not_video')
   }
   try {
     await session.select(file.path)

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -125,4 +126,23 @@ func TestHealthHandlerValidatesAndCaches(t *testing.T) {
 	require.NoError(t, json.Unmarshal(second.Body.Bytes(), &res))
 	require.True(t, res.Cached)
 	require.Equal(t, 1, calls)
+}
+
+// Um titulo com ~190 fontes: todas conferidas, em varios pacotes.
+func TestScrapeAtCoversEveryHashAcrossPackets(t *testing.T) {
+	counts := map[string]SwarmCount{}
+	hashes := []string{}
+	for i := 0; i < 190; i++ {
+		h := fmt.Sprintf("%040x", i+1)
+		hashes = append(hashes, h)
+		counts[h] = SwarmCount{Seeders: i + 1}
+	}
+	addr := fakeTracker(t, counts)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	got, err := scrapeAt(ctx, addr, hashes)
+	require.NoError(t, err)
+	require.Len(t, got, 190)
+	require.Equal(t, 190, got[hashes[189]].Seeders)
+	require.Equal(t, 71, got[hashes[70]].Seeders)
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { episodePattern, pickStreamFile } from './openStream'
+import { episodePattern, pickStreamFile, wrongEpisode } from './openStream'
 import type { StreamLocation } from './streams'
 import type { TorrentVideoFile } from '../torrent'
 
@@ -88,5 +88,27 @@ describe('pickStreamFile', () => {
 
   it('has nothing to give when the torrent holds no video', () => {
     expect(pickStreamFile([], location())).toBeUndefined()
+  })
+})
+
+describe('wrongEpisode', () => {
+  const s2pack = [
+    file(0, 'Loki.S02E01.1080p.DUAL.mkv'),
+    file(1, 'Loki.S02E02.1080p.DUAL.mkv'),
+  ]
+
+  it('refuses a pack of another season instead of playing its first file', () => {
+    expect(wrongEpisode(s2pack, location(), { type: 'series', id: 'tt9140554', season: 1, episode: 1 })).toBe(true)
+    expect(pickStreamFile(s2pack, location(), { type: 'series', id: 'tt9140554', season: 1, episode: 1 })).toBeUndefined()
+  })
+
+  it('refuses a single file that is another episode', () => {
+    expect(wrongEpisode([file(0, 'Loki.S01E03.mkv')], location(), { type: 'series', id: 'tt9140554', season: 1, episode: 1 })).toBe(true)
+  })
+
+  it('accepts the episode, untagged files, and movies', () => {
+    expect(wrongEpisode(pack, location(), { type: 'series', id: 'tt9140554', season: 1, episode: 2 })).toBe(false)
+    expect(wrongEpisode([file(0, 'Loki.Episodio.Um.Dublado.mkv')], location(), { type: 'series', id: 'tt9140554', season: 1, episode: 1 })).toBe(false)
+    expect(wrongEpisode(s2pack, location(), undefined)).toBe(false)
   })
 })

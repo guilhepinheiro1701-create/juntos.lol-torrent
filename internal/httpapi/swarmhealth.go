@@ -40,7 +40,13 @@ var defaultScrapeTrackers = []string{
 }
 
 const (
-	maxHealthHashes   = 60 // um scrape UDP leva ate ~74 por pacote
+	// Todas as fontes de um titulo: o Homem de Ferro tem ~190. Conferir so
+	// as 40 "melhores" pelo numero do plugin deixava as outras sem conferencia,
+	// e uma fonte nao conferida ganhava das conferidas vivas.
+	maxHealthHashes = 300
+	// Um pacote de scrape UDP leva ate ~74 hashes (BEP 15); o resto vai em
+	// mais pacotes na mesma conexao.
+	scrapeChunk       = 70
 	maxExtraTrackers  = 6
 	scrapeTimeout     = 3 * time.Second
 	healthCacheMaxAge = 2 * time.Minute
@@ -226,7 +232,7 @@ func scrapeAt(ctx context.Context, target *net.UDPAddr, hashes []string) (map[st
 	if _, err := conn.Write(req); err != nil {
 		return nil, err
 	}
-	buf := make([]byte, 2048)
+	buf := make([]byte, 8+12*scrapeChunk+64)
 	n, err := conn.Read(buf)
 	if err != nil {
 		return nil, err
@@ -236,37 +242,48 @@ func scrapeAt(ctx context.Context, target *net.UDPAddr, hashes []string) (map[st
 	}
 	connID := binary.BigEndian.Uint64(buf[8:])
 
-	tid = randomU32()
-	scrape := make([]byte, 16, 16+20*len(hashes))
-	binary.BigEndian.PutUint64(scrape[0:], connID)
-	binary.BigEndian.PutUint32(scrape[8:], 2) // scrape
-	binary.BigEndian.PutUint32(scrape[12:], tid)
-	for _, hash := range hashes {
-		raw, _ := hex.DecodeString(hash)
-		scrape = append(scrape, raw...)
-	}
-	if _, err := conn.Write(scrape); err != nil {
-		return nil, err
-	}
-	n, err = conn.Read(buf)
-	if err != nil {
-		return nil, err
-	}
-	if n < 8 || binary.BigEndian.Uint32(buf[0:]) != 2 || binary.BigEndian.Uint32(buf[4:]) != tid {
-		return nil, errors.New("bad scrape reply")
-	}
 	out := map[string]SwarmCount{}
-	for i, hash := range hashes {
-		off := 8 + 12*i
-		if off+12 > n {
-			break
+	for start := 0; start < len(hashes); start += scrapeChunk {
+		chunk := hashes[start:min(start+scrapeChunk, len(hashes))]
+		tid = randomU32()
+		scrape := make([]byte, 16, 16+20*len(chunk))
+		binary.BigEndian.PutUint64(scrape[0:], connID)
+		binary.BigEndian.PutUint32(scrape[8:], 2) // scrape
+		binary.BigEndian.PutUint32(scrape[12:], tid)
+		for _, hash := range chunk {
+			raw, _ := hex.DecodeString(hash)
+			scrape = append(scrape, raw...)
 		}
-		out[hash] = SwarmCount{
-			Seeders:  int(binary.BigEndian.Uint32(buf[off:])),
-			Leechers: int(binary.BigEndian.Uint32(buf[off+8:])),
+		if _, err := conn.Write(scrape); err != nil {
+			return partial(out, err)
+		}
+		n, err = conn.Read(buf)
+		if err != nil {
+			return partial(out, err)
+		}
+		if n < 8 || binary.BigEndian.Uint32(buf[0:]) != 2 || binary.BigEndian.Uint32(buf[4:]) != tid {
+			return partial(out, errors.New("bad scrape reply"))
+		}
+		for i, hash := range chunk {
+			off := 8 + 12*i
+			if off+12 > n {
+				break
+			}
+			out[hash] = SwarmCount{
+				Seeders:  int(binary.BigEndian.Uint32(buf[off:])),
+				Leechers: int(binary.BigEndian.Uint32(buf[off+8:])),
+			}
 		}
 	}
 	return out, nil
+}
+
+// partial: o que ja voltou de pacotes anteriores vale; so sem nada e erro.
+func partial(out map[string]SwarmCount, err error) (map[string]SwarmCount, error) {
+	if len(out) > 0 {
+		return out, nil
+	}
+	return nil, err
 }
 
 func randomU32() uint32 {

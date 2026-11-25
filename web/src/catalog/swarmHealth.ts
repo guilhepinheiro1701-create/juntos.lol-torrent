@@ -18,7 +18,9 @@ export interface LiveSwarms {
 }
 
 const EMPTY: LiveSwarms = { loading: false, counts: new Map(), unreachable: false }
-const MAX_HASHES = 40
+// Todas (o servidor confere ate 300 em pacotes): uma fonte que fica sem
+// conferencia nao pode ser comparada com as conferidas.
+const MAX_HASHES = 300
 const MAX_TRACKERS = 6
 
 export function infoHashOf(stream: CatalogStream): string | null {

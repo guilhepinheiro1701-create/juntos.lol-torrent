@@ -26,7 +26,7 @@
 export const manifest = {
   id: 'juntos-torrent-sources',
   name: 'Fontes BR (BeTor, Peerflix, Mico-Leão...) + Torrentio + Comet',
-  version: '4.4.0',
+  version: '4.5.0',
   // Every host this plugin may ever reach. The page compares the hostname of
   // each request against this list by exact equality, on the URL asked for and
   // again on the URL the answer came from, so a host added to PROVIDERS later
@@ -385,7 +385,32 @@ const MAX_PER_PROVIDER = 120
 
 async function ask(api, provider, mirror, ctx) {
   const all = await askRaw(api, provider, mirror, ctx)
-  return all.filter((raw) => !isNotice(raw)).slice(0, MAX_PER_PROVIDER)
+  // Quem busca por texto (o indexador) devolve tudo com o nome da serie:
+  // pacotes de outras temporadas, episodios vizinhos. So fica o que pode ser
+  // o episodio pedido.
+  const fits = provider.needsTitle && ctx.type === 'series' ? (raw) => episodeFits(raw, ctx.id) : () => true
+  return all.filter((raw) => !isNotice(raw) && fits(raw)).slice(0, MAX_PER_PROVIDER)
+}
+
+/**
+ * Pode ser o episodio `id` ("tt...:temporada:episodio")? Um SxxEyy no nome
+ * decide sozinho; senao, "2ª Temporada" / "Temporada 2" / "Season 2" / "S02"
+ * decidem pela temporada (um pacote da temporada certa serve: o app escolhe o
+ * arquivo do episodio dentro dele). Sem nenhuma marcacao, fica.
+ */
+export function episodeFits(raw, id) {
+  const [, s, e] = String(id).split(':').map(Number)
+  if (!Number.isFinite(s) || !Number.isFinite(e)) return true
+  const text = `${raw?.title ?? ''} ${raw?.name ?? ''} ${raw?.behaviorHints?.filename ?? ''}`
+  const episodes = [...text.matchAll(/s(\d{1,2})[\s._-]*e(\d{1,3})(?!\d)/gi)].map((m) => [Number(m[1]), Number(m[2])])
+  if (episodes.length > 0) return episodes.some(([season, episode]) => season === s && episode === e)
+  const seasons = [
+    ...[...text.matchAll(/(\d{1,2})\s*[ªaº°]?\s*temporada/gi)].map((m) => Number(m[1])),
+    ...[...text.matchAll(/temporada\s*(\d{1,2})/gi)].map((m) => Number(m[1])),
+    ...[...text.matchAll(/season\s*(\d{1,2})/gi)].map((m) => Number(m[1])),
+    ...[...text.matchAll(/(?<![a-z\d])s(\d{1,2})(?![\de])/gi)].map((m) => Number(m[1])),
+  ]
+  return seasons.length === 0 || seasons.includes(s)
 }
 
 async function askRaw(api, provider, mirror, ctx) {

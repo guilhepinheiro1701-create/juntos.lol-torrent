@@ -255,6 +255,7 @@ export const ptBR: Record<string, string> = {
   'basic.chosenLive': 'Melhor opção: {quality} · {language} · {seeds} seeds agora (conferido)',
   'basic.trackersBlocked': 'Não consegui falar com nenhum tracker. Quase sempre é firewall ou antivírus (ex.: Norton) bloqueando o tráfego do Docker; libere o Docker nele. O diagnostico.bat confirma.',
   'basic.noLiveDub': 'As versões dubladas deste título estão sem seeds agora (não abririam). Vai a versão com áudio original, que está viva.',
+  'home.torrentWrongEpisode': 'As fontes encontradas não têm este episódio (eram de outra temporada ou episódio). Tente outro episódio ou o modo avançado.',
   'basic.allDead': 'Nenhuma fonte deste título tem seeds agora. Pode não abrir; tente mais tarde ou outro título.',
   'details.seedsLive': '{n} seeds agora',
   'details.seedsLiveHint': 'Conferido agora nos trackers',

@@ -53,11 +53,15 @@ export function BasicPicker({ streams, onWatch, onDownload, live, t }: BasicPick
   // Fontes conferidas com 0 ou 1 seed nao entram na fila de tentativas (cada
   // uma custava ate 45 s de espera para nada) - a nao ser que nao sobre
   // outra: ai vao as de 1 seed, e por ultimo todas.
+  // Ordem da fila: vivas conferidas, depois as que ninguem conferiu, depois
+  // as de 1 seed; as de 0 so se nao sobrar nada.
   const viable = useMemo(() => {
-    const healthy = ranked.filter((stream) => { const seeds = liveSeeds(stream, live); return seeds === null || seeds >= 2 })
-    if (healthy.length > 0) return healthy
-    const alive = ranked.filter((stream) => liveSeeds(stream, live) !== 0)
-    return alive.length > 0 ? alive : ranked
+    const seedsOf = (stream: CatalogStream) => liveSeeds(stream, live)
+    const alive = ranked.filter((stream) => (seedsOf(stream) ?? -1) >= 2)
+    const unknown = ranked.filter((stream) => seedsOf(stream) === null)
+    const weak = ranked.filter((stream) => seedsOf(stream) === 1)
+    const queue = [...alive, ...unknown, ...weak]
+    return queue.length > 0 ? queue : ranked
   }, [ranked, live])
   const best = viable[0]
   const bestLive = best ? liveSeeds(best, live) : null

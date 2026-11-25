@@ -62,3 +62,17 @@ describe('as fontes brasileiras e os avisos falsos', () => {
     expect(names).toMatch(/BeTor/)
   })
 })
+
+describe('episodeFits (o indexador busca so pelo nome da serie)', () => {
+  it('keeps the asked episode and its season pack, drops other seasons and episodes', async () => {
+    const { episodeFits } = await import('./builtin-source.js') as unknown as { episodeFits: (raw: unknown, id: string) => boolean }
+    const id = 'tt9140554:1:1'
+    expect(episodeFits({ title: 'Loki S01E01 1080p' }, id)).toBe(true)
+    expect(episodeFits({ title: 'Loki - 1ª Temporada Completa' }, id)).toBe(true)
+    expect(episodeFits({ title: 'Loki (2021) Dublado' }, id)).toBe(true)
+    expect(episodeFits({ title: 'Loki 2ª Temporada Completa' }, id)).toBe(false)
+    expect(episodeFits({ title: 'Loki S01E03 Dual' }, id)).toBe(false)
+    expect(episodeFits({ title: 'Loki S02 Dual' }, id)).toBe(false)
+    expect(episodeFits({ title: 'Homem de Ferro' }, 'tt0371746')).toBe(true)
+  })
+})

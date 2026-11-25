@@ -46,8 +46,12 @@ function score(stream: CatalogStream, quality: QualityChoice, language: Language
   // O numero conferido agora nos trackers vale mais que o do plugin, que
   // envelhece; um torrent conferido sem seed nenhum vai para o fim da fila.
   const verified = liveSeeds(stream, live)
-  const seeds = verified ?? stream.seeders ?? 0
+  // Os trackers responderam por outras fontes mas nao por esta: o numero do
+  // plugin (velho, as vezes inflado nos sites brasileiros) nao vale o mesmo.
+  const checked = live !== undefined && live.counts.size > 0
+  const seeds = verified ?? (checked ? Math.min(stream.seeders ?? 0, 3) : stream.seeders ?? 0)
   let value = Math.min(Math.log2(seeds + 1), 6) * 10
+  if (verified === null && checked) value -= 20
   if (verified === 0) value -= 120
   // Um seed so, conferido agora, quase nunca abre: o diagnostico mostrou
   // varios assim sem um peer sequer aceitando conexao. Fica atras de uma

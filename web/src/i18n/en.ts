@@ -255,6 +255,7 @@ export const en: Record<string, string> = {
   'basic.chosenLive': 'Best option: {quality} · {language} · {seeds} seeds now (verified)',
   'basic.trackersBlocked': 'Could not reach any tracker. Usually a firewall or antivirus (e.g. Norton) blocking Docker traffic; allow Docker in it. diagnostico.bat confirms.',
   'basic.noLiveDub': 'The dubbed versions of this title have no seeds right now (they would not open). Playing the original-audio version, which is alive.',
+  'home.torrentWrongEpisode': 'The sources found do not contain this episode (they were another season or episode). Try another episode or advanced mode.',
   'basic.allDead': 'No source for this title has seeds right now. It may not open; try later or another title.',
   'details.seedsLive': '{n} seeds now',
   'details.seedsLiveHint': 'Verified now on the trackers',

@@ -109,6 +109,54 @@ function isMetaType(value: string | undefined): value is MetaType {
   return value === 'movie' || value === 'series'
 }
 
+const RACE_SIZE = 3
+const RACE_LISTING_MS = 40_000
+
+/**
+ * Abre varias fontes juntas e fica com a primeira que listar. As que perdem
+ * sao canceladas; uma que ainda assim termine depois e destruida. Se todas
+ * falham, o erro mais informativo sobe (um "sem metadados" so se for o unico).
+ */
+export async function raceOpen(
+  batch: TitlePick[],
+  outer: AbortSignal,
+  listingTimeoutMs: number | undefined,
+  onProbe: (probes: WorkerProbe[]) => void,
+): Promise<{ opened: Awaited<ReturnType<typeof openCatalogStream>>; pick: TitlePick }> {
+  const controllers = batch.map(() => new AbortController())
+  const forward = () => controllers.forEach((controller) => controller.abort())
+  outer.addEventListener('abort', forward, { once: true })
+  let settled = false
+  const errors: unknown[] = []
+  try {
+    return await new Promise((resolve, reject) => {
+      let pending = batch.length
+      batch.forEach((pick, index) => {
+        openCatalogStream(pick.stream, pick.target, undefined, {
+          ...(index === 0 ? { onProbe } : {}),
+          signal: controllers[index].signal,
+          ...(listingTimeoutMs ? { listingTimeoutMs } : {}),
+        }).then((opened) => {
+          if (settled) { opened.session.destroy(); return }
+          settled = true
+          controllers.forEach((controller, other) => { if (other !== index) controller.abort() })
+          resolve({ opened, pick })
+        }, (error: unknown) => {
+          errors.push(error)
+          pending -= 1
+          if (pending === 0 && !settled) {
+            settled = true
+            const telling = errors.find((e) => !(isTorrentError(e) && (e as { code?: string }).code === 'no_metadata'))
+            reject(outer.aborted ? new DOMException('cancelled', 'AbortError') : (telling ?? errors[errors.length - 1]))
+          }
+        })
+      })
+    })
+  } finally {
+    outer.removeEventListener('abort', forward)
+  }
+}
+
 export function Home() {
   const jlocal = useJLocal()
   const t = useT()
@@ -352,21 +400,23 @@ export function Home() {
         // Modo basico: a melhor fonte primeiro e, se o enxame dela nao
         // responder, a seguinte, sozinho. Com plano B na fila, cada tentativa
         // espera menos — o que custa e ficar 2 minutos num torrent morto.
+        // As fontes vao em turmas de ate 3, abertas AO MESMO TEMPO: a primeira
+        // que o enxame responder toca, e as outras sao canceladas (o worker as
+        // solta). Uma de cada vez, tres fontes mortas custavam minutos.
         const attempts = [media.pick, ...(media.alternatives ?? [])]
         let opened: Awaited<ReturnType<typeof openCatalogStream>> | null = null
-        for (let index = 0; index < attempts.length && !opened; index += 1) {
-          const attempt = attempts[index]
-          const last = index === attempts.length - 1
+        for (let start = 0; start < attempts.length && !opened; start += RACE_SIZE) {
+          if (start > 0) { setStartStage('retry'); setStageAt(Date.now()) }
+          const batch = attempts.slice(start, start + RACE_SIZE)
+          const lastBatch = start + RACE_SIZE >= attempts.length
           try {
-            if (index > 0) { setStartStage('retry'); setStageAt(Date.now()) }
-            opened = await openCatalogStream(attempt.stream, attempt.target, undefined, {
-              onProbe: (probes) => { setStreamProbes(probes); setStartStage((stage) => (stage === 'search' ? 'connect' : stage)); setStageAt(Date.now()) },
-              signal: abort.signal,
-              ...(last ? {} : { listingTimeoutMs: 30_000 }),
+            const won = await raceOpen(batch, abort.signal, lastBatch && batch.length === 1 ? undefined : RACE_LISTING_MS, (probes) => {
+              setStreamProbes(probes); setStartStage((stage) => (stage === 'search' ? 'connect' : stage)); setStageAt(Date.now())
             })
-            usedPick = attempt
+            opened = won.opened
+            usedPick = won.pick
           } catch (error) {
-            if (last || abort.signal.aborted || !isTorrentError(error)) throw error
+            if (lastBatch || abort.signal.aborted || !isTorrentError(error)) throw error
           }
         }
         if (!opened) throw new Error('no source opened')
