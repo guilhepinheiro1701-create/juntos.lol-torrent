@@ -206,6 +206,13 @@ func startTorrent(service *worker.Service) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "unknown_storage"})
 			return
 		}
+		// O nome da fonte vai para o log: o diagnostico mostra o que foi
+		// escolhido, nao so um hash.
+		dn := req.DN
+		if len(dn) > 120 {
+			dn = dn[:120]
+		}
+		slog.Info("torrent requested", "infohash", strings.ToLower(req.InfoHash), "name", dn, "trackers", len(trackers))
 		job, err := service.Start(c.Request.Context(), SessionID(c),
 			strings.ToLower(req.InfoHash), req.DN, req.Storage, trackers, req.Preferred)
 		if err != nil {

@@ -1782,7 +1782,16 @@ impl tracker_comms::TorrentStatsProvider for PeerRxTorrentInfo {
             Some(mt) => mt,
             None => {
                 trace!(info_hash=?self.info_hash, "can't find torrent in the session, using default stats");
-                return Default::default();
+                // ss-worker: ainda buscando a ficha (magnet). Com o padrao
+                // (total 0, baixado 0) o anuncio dizia "falta 0 byte" - ou
+                // seja, SEED - e todo torrent que o site tentava ganhava um
+                // seed falso (o proprio worker), fazendo torrent morto parecer
+                // vivo para a conferencia de seeds. Quem ainda nao tem a ficha
+                // e leecher.
+                return tracker_comms::TrackerCommsStats {
+                    total_bytes: 1 << 30,
+                    ..Default::default()
+                };
             }
         };
         let stats = mt.stats();
