@@ -73,6 +73,45 @@ Rodar 'Teste de rede BitTorrent (dentro da rede do worker)' {
             docker run -i --rm --network "container:$($id[0].Trim())" python:3.12-alpine python - @hashes
     }
 }
+Rodar 'Conexoes TCP do worker agora' {
+    # Quantas conexoes o worker tem abertas, por estado. Muitas em SYN_SENT
+    # (tentando conectar e sem resposta) e poucas ESTABLISHED e o retrato de
+    # algo segurando a saida: firewall/antivirus ou o proxy de rede do Docker.
+    $estados = @{ '01' = 'ESTABLISHED (conectadas)'; '02' = 'SYN_SENT (tentando, sem resposta)'; '06' = 'TIME_WAIT'; '08' = 'CLOSE_WAIT'; '0A' = 'LISTEN' }
+    $raw = @(docker compose --env-file .env.local exec -T worker cat /proc/net/tcp /proc/net/tcp6 2>$null)
+    $raw | Where-Object { $_ -match '^\s*\d+:' } | ForEach-Object { ($_.Trim() -split '\s+')[3] } |
+        Group-Object | Sort-Object Count -Descending | ForEach-Object {
+            $nome = if ($estados.ContainsKey($_.Name)) { $estados[$_.Name] } else { "estado $($_.Name)" }
+            '{0,5}  {1}' -f $_.Count, $nome
+        }
+}
+Rodar 'Os mesmos peers, testados direto do Windows (fora do Docker)' {
+    $lista = @($linhas | Where-Object { "$_" -like 'PEERLIST *' } | Select-Object -Last 1)
+    if ($lista.Count -eq 0) { 'sem lista de peers do teste acima'; return }
+    $peers = @(("$($lista[0])" -replace '^PEERLIST\s+', '') -split '\s+' | Where-Object { $_ } | Select-Object -First 16)
+    $ok = 0
+    foreach ($p in $peers) {
+        $i = $p.LastIndexOf(':')
+        $c = New-Object Net.Sockets.TcpClient
+        try {
+            $t = $c.ConnectAsync($p.Substring(0, $i), [int]$p.Substring($i + 1))
+            if ($t.Wait(3000) -and $c.Connected) { $ok++ }
+        } catch {} finally { $c.Close() }
+    }
+    $dentro = 0; $dentroDe = 0
+    foreach ($l in $linhas) {
+        if ("$l" -match 'conectaram por TCP=(\d+) de (\d+)') { $dentro += [int]$Matches[1]; $dentroDe += [int]$Matches[2] }
+    }
+    "direto do Windows: $ok de $($peers.Count) conectaram"
+    "de dentro do Docker (teste acima): $dentro de $dentroDe"
+    if ($ok -gt 0 -and $dentro -eq 0) {
+        'CONCLUSAO: o Windows alcanca os peers e o Docker nao. O bloqueio esta no Docker Desktop (rede do WSL) ou no antivirus filtrando so o Docker.'
+    } elseif ($ok -eq 0 -and $peers.Count -gt 0) {
+        'CONCLUSAO: nem o Windows alcanca os peers. O bloqueio esta no Windows/antivirus (Norton: firewall ou Protecao contra Intrusao), no roteador ou no provedor.'
+    } else {
+        'CONCLUSAO: os dois lados conectam.'
+    }
+}
 Rodar 'Logs do worker (baixador de torrents)' { docker compose --env-file .env.local logs --no-color --tail 300 worker }
 Rodar 'Logs do servidor' { docker compose --env-file .env.local logs --no-color --tail 150 app }
 

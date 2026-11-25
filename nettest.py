@@ -112,6 +112,7 @@ for host, port in DHT:
         print("FALHOU %s (%s)" % (host, e))
 
 RESULTS = {}
+TRIED = []
 
 
 def probe_peers(label, infohash):
@@ -120,6 +121,7 @@ def probe_peers(label, infohash):
     tried = 0
     for ip, port in peers[:12]:
         tried += 1
+        TRIED.append("%s:%d" % (ip, port))
         try:
             c = socket.create_connection((ip, port), timeout=3)
             c.close()
@@ -180,3 +182,10 @@ elif tried_torrents and all(v[0] <= 1 for v in tried_torrents):
     print("Escolha outra fonte ou um titulo mais popular.")
 else:
     print("A rede esta OK para BitTorrent.")
+
+
+# Os mesmos peers, para o diagnostico testar tambem direto do Windows (fora
+# do Docker) e saber de que lado a conexao morre.
+if TRIED:
+    print("")
+    print("PEERLIST " + " ".join(TRIED[:24]))
