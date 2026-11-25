@@ -4,6 +4,7 @@ mod entry;
 mod fill;
 mod floors;
 mod kept;
+mod metainfo;
 mod reaper;
 mod slots;
 mod window;
@@ -385,10 +386,19 @@ impl Engine {
         };
         let place = place.to_path_buf();
         let magnet = admission::magnet(&infohash, trackers);
+        // Um torrent ja aberto antes (e todo filme baixado) tem a ficha no
+        // disco: abre sem pedir nada aos peers. Sem isto, depois de um
+        // reinicio do worker, ate um filme inteiro no disco esperava a ficha
+        // chegar pela rede - e com o enxame mudo, falhava em 90 s.
+        let cached = metainfo::load(&self.cfg.data_dir, &infohash);
+        let source = match &cached {
+            Some(bytes) => AddTorrent::from_bytes(bytes.clone()),
+            None => AddTorrent::from_url(&magnet),
+        };
         let listed = tokio::time::timeout(
             INIT_TIMEOUT,
             self.session.add_torrent(
-                AddTorrent::from_url(&magnet),
+                source,
                 Some(AddTorrentOptions {
                     list_only: true,
                     force_tracker_interval: Some(TRACKER_INTERVAL),
@@ -415,13 +425,26 @@ impl Engine {
                 return Err(Rejection::Internal(anyhow!("unexpected add response")));
             }
         };
+        if cached.is_none() {
+            metainfo::save(&self.cfg.data_dir, &infohash, &listed.torrent_bytes);
+        }
         admission::screen_video_only(&listed.info)?;
         let mut options = AddTorrentOptions {
             overwrite: true,
             paused: true,
             initial_peers: Some(listed.seen_peers.clone()),
             force_tracker_interval: Some(TRACKER_INTERVAL),
-            output_folder: Some(place.to_string_lossy().into_owned()),
+            // Um filme guardado volta para a pasta onde ja esta (os bytes que
+            // ele tem sao conferidos, nao baixados de novo), qualquer que seja
+            // o lugar pedido agora.
+            output_folder: Some(
+                self.kept
+                    .folder(&infohash)
+                    .filter(|folder| folder.exists())
+                    .unwrap_or_else(|| place.clone())
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
             ..Default::default()
         };
         options.ratelimits.upload_bps = std::num::NonZeroU32::new(self.cfg.upload_bps);

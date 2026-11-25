@@ -51,6 +51,11 @@ impl Kept {
         self.map.lock().contains_key(&infohash.to_ascii_lowercase())
     }
 
+    /// Onde um torrent guardado mora (a pasta que ele usou ao ser baixado).
+    pub fn folder(&self, infohash: &str) -> Option<PathBuf> {
+        self.map.lock().get(&infohash.to_ascii_lowercase()).cloned()
+    }
+
     /// As pastas que a varredura de subida deve poupar.
     pub fn folders(&self) -> Vec<PathBuf> {
         self.map.lock().values().cloned().collect()
