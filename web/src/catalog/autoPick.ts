@@ -49,6 +49,10 @@ function score(stream: CatalogStream, quality: QualityChoice, language: Language
   const seeds = verified ?? stream.seeders ?? 0
   let value = Math.min(Math.log2(seeds + 1), 6) * 10
   if (verified === 0) value -= 120
+  // Um seed so, conferido agora, quase nunca abre: o diagnostico mostrou
+  // varios assim sem um peer sequer aceitando conexao. Fica atras de uma
+  // fonte viva mesmo de outro idioma, e a tela avisa da troca.
+  else if (verified === 1) value -= 70
   else if (seeds === 0) value -= 40
   else if (verified !== null) value += 5
 

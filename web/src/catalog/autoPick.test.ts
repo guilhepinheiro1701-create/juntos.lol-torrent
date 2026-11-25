@@ -49,3 +49,25 @@ describe('loadingProgress', () => {
     expect(loadingProgress('connect', 40).etaSeconds).toBeNull()
   })
 })
+
+describe('rankStreams with seeds checked live', () => {
+  const at = (label: string, hash: string, languages: string[] = []): CatalogStream => ({
+    ...s(label, '1080p', 50, languages),
+    location: { kind: 'torrent', infoHash: hash.repeat(40), fileIdx: 0, fileName: 'f.mkv', trackers: [] },
+  })
+  const list = [at('dub-one-seed', 'a', ['🇧🇷']), at('dub-one-seed-2', 'b', ['🇧🇷']), at('orig-alive', 'c')]
+  const live = {
+    loading: false, unreachable: false,
+    counts: new Map([['a'.repeat(40), { seeders: 1, leechers: 1 }], ['b'.repeat(40), { seeders: 1, leechers: 0 }], ['c'.repeat(40), { seeders: 40, leechers: 9 }]]),
+  }
+
+  // O caso dos Simpsons: todas as dubladas com 1 seed, sem peer que conecte.
+  it('puts a live original ahead of dubbed versions with a single seed, even when dubbed was asked', () => {
+    expect(rankStreams(list, 'auto', 'dubbed', true, live)[0].label).toBe('orig-alive')
+  })
+
+  it('still prefers a dubbed version that is actually alive', () => {
+    const alive = { ...live, counts: new Map(live.counts).set('a'.repeat(40), { seeders: 6, leechers: 1 }) }
+    expect(rankStreams(list, 'auto', 'dubbed', true, alive)[0].label).toBe('dub-one-seed')
+  })
+})

@@ -26,6 +26,23 @@ Write-Host ''
 Write-Host '  juntos.lol - atualizar' -ForegroundColor White
 Write-Host '  ======================' -ForegroundColor DarkGray
 
+# O commit de um .zip do GitHub: ele vem como comentario, nos ultimos 40
+# bytes do arquivo. Vazio se nao estiver la.
+function ShaDoZip($caminho) {
+    try {
+        $fs = [IO.File]::OpenRead($caminho)
+        try {
+            $n = [Math]::Min(64, $fs.Length)
+            $null = $fs.Seek(-$n, 'End')
+            $buf = New-Object byte[] $n
+            $null = $fs.Read($buf, 0, $n)
+        } finally { $fs.Close() }
+        $fim = [Text.Encoding]::ASCII.GetString($buf)
+        if ($fim -match '([0-9a-f]{40})$') { return $Matches[1] }
+    } catch {}
+    return ''
+}
+
 $temGit = (Test-Path -LiteralPath '.git') -and (Get-Command git -ErrorAction SilentlyContinue)
 
 function VersaoAtual {
@@ -96,6 +113,9 @@ if ($temGit) {
         # O .zip nunca traz .env.local nem o override (estao no .gitignore),
         # entao copiar por cima nao tem como apaga-los.
         Copy-Item -Path (Join-Path $dentro.FullName '*') -Destination $PSScriptRoot -Recurse -Force -ErrorAction Stop
+        # O .zip do GitHub traz o commit no comentario do fim do arquivo: vale
+        # quando a API do GitHub limitou a consulta (60 por hora sem login).
+        if (-not $nova) { $nova = ShaDoZip $zip }
         if ($nova) { Set-Content -LiteralPath '.versao' -Value $nova -Encoding ASCII }
     } catch {
         Erro "Nao consegui baixar: $($_.Exception.Message)"

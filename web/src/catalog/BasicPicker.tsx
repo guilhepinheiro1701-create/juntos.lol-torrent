@@ -50,14 +50,19 @@ export function BasicPicker({ streams, onWatch, onDownload, live, t }: BasicPick
     () => rankStreams(streams, shownQuality, shownLanguage, t.language !== 'en', live),
     [streams, shownQuality, shownLanguage, t.language, live],
   )
-  // Fontes conferidas sem seed nenhum nao entram na fila de tentativas
-  // (cada uma custava 45 s de espera) - a nao ser que nao sobre nenhuma.
+  // Fontes conferidas com 0 ou 1 seed nao entram na fila de tentativas (cada
+  // uma custava ate 45 s de espera para nada) - a nao ser que nao sobre
+  // outra: ai vao as de 1 seed, e por ultimo todas.
   const viable = useMemo(() => {
+    const healthy = ranked.filter((stream) => { const seeds = liveSeeds(stream, live); return seeds === null || seeds >= 2 })
+    if (healthy.length > 0) return healthy
     const alive = ranked.filter((stream) => liveSeeds(stream, live) !== 0)
     return alive.length > 0 ? alive : ranked
   }, [ranked, live])
   const best = viable[0]
   const bestLive = best ? liveSeeds(best, live) : null
+  // Pediu dublado, mas nenhuma dublada esta viva: vai a outra, e diz.
+  const dubSwapped = shownLanguage === 'dubbed' && !!best && !best.languages.includes('🇧🇷') && !live?.loading
   const allDead = live !== undefined && !live.loading && ranked.length > 0 && ranked.every((stream) => liveSeeds(stream, live) === 0)
 
   const chooseQuality = (value: QualityChoice) => { setQuality(value); savePrefs(value, language) }
@@ -114,6 +119,11 @@ export function BasicPicker({ streams, onWatch, onDownload, live, t }: BasicPick
         <p className="basic-warning" role="status">
           <ShieldAlert size={16} aria-hidden="true" />
           <span>{t('basic.trackersBlocked')}</span>
+        </p>
+      ) : dubSwapped ? (
+        <p className="basic-warning" role="status">
+          <ShieldAlert size={16} aria-hidden="true" />
+          <span>{t('basic.noLiveDub')}</span>
         </p>
       ) : allDead ? (
         <p className="basic-warning" role="status">

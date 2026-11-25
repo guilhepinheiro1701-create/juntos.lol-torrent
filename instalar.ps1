@@ -30,6 +30,23 @@ function Passo($t)  { Write-Host "  [..] $t" -ForegroundColor Gray }
 function Erro($t)   { Write-Host "  [x]  $t" -ForegroundColor Red }
 function Nota($t)   { Write-Host "       $t" -ForegroundColor DarkGray }
 
+# O commit de um .zip do GitHub: ele vem como comentario, nos ultimos 40
+# bytes do arquivo. Vazio se nao estiver la.
+function ShaDoZip($caminho) {
+    try {
+        $fs = [IO.File]::OpenRead($caminho)
+        try {
+            $n = [Math]::Min(64, $fs.Length)
+            $null = $fs.Seek(-$n, 'End')
+            $buf = New-Object byte[] $n
+            $null = $fs.Read($buf, 0, $n)
+        } finally { $fs.Close() }
+        $fim = [Text.Encoding]::ASCII.GetString($buf)
+        if ($fim -match '([0-9a-f]{40})$') { return $Matches[1] }
+    } catch {}
+    return ''
+}
+
 Write-Host ''
 Write-Host '  juntos.lol - instalacao' -ForegroundColor White
 Write-Host '  =======================' -ForegroundColor DarkGray
@@ -73,10 +90,11 @@ if (-not $baixou) {
         New-Item -ItemType Directory -Path $Pasta -Force | Out-Null
         Copy-Item -Path (Join-Path $dentro.FullName '*') -Destination $Pasta -Recurse -Force -ErrorAction Stop
         # Sem git nao ha como perguntar a versao a pasta; ela fica anotada aqui.
-        try {
-            $sha = (Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/$Repo/commits/$Ramo" -ErrorAction Stop).sha
-            if ($sha) { Set-Content -LiteralPath (Join-Path $Pasta '.versao') -Value $sha -Encoding ASCII }
-        } catch {}
+        $sha = ShaDoZip $zip
+        if (-not $sha) {
+            try { $sha = (Invoke-RestMethod -UseBasicParsing -Uri "https://api.github.com/repos/$Repo/commits/$Ramo" -ErrorAction Stop).sha } catch {}
+        }
+        if ($sha) { Set-Content -LiteralPath (Join-Path $Pasta '.versao') -Value $sha -Encoding ASCII }
         $baixou = $true
     } catch {
         Erro "Nao consegui baixar: $($_.Exception.Message)"

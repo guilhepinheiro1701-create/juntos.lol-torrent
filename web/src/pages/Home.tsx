@@ -362,7 +362,7 @@ export function Home() {
             opened = await openCatalogStream(attempt.stream, attempt.target, undefined, {
               onProbe: (probes) => { setStreamProbes(probes); setStartStage((stage) => (stage === 'search' ? 'connect' : stage)); setStageAt(Date.now()) },
               signal: abort.signal,
-              ...(last ? {} : { listingTimeoutMs: 45_000 }),
+              ...(last ? {} : { listingTimeoutMs: 30_000 }),
             })
             usedPick = attempt
           } catch (error) {
