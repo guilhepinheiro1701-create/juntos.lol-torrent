@@ -9,7 +9,7 @@ vi.mock('../catalog/openStream', async (orig) => ({
   })),
 }))
 
-const { raceOpen } = await import('./Home')
+const { raceOpen } = await import('./raceOpen')
 const pick = (label: string) => ({ stream: { label } }) as never
 
 describe('raceOpen', () => {
