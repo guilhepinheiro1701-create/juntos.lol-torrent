@@ -49,6 +49,10 @@ services:
       DATA_DIR: /data
       WEB_DIR: /web
       GIN_MODE: release
+      # Opcional: chave gratuita do TMDB (themoviedb.org > Configuracoes > API)
+      # para a classificacao indicativa de todas as series e filmes. Sem ela,
+      # vem do Wikidata, que tem a da maioria dos filmes e de poucas series.
+      TMDB_API_KEY: ${TMDB_API_KEY:-}
 
       # A pasta dos segmentos. Definir isto é o que troca o bucket por disco:
       # o navegador escreve e lê no mesmo endereço da página, então não há

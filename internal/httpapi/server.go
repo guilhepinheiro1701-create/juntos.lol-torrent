@@ -111,6 +111,7 @@ func NewServer(cfg config.Config, store *room.Store, opts ...ServerOption) *gin.
 	}
 	RegisterRelayRoute(r, options.torrentAccess.Service)
 	RegisterPluginFetchRoute(r.Group("/api"), NewPluginFetcher(cfg), options.pluginSessions, options.pluginQuota)
+	r.Group("/api").GET("/ratings/:type/:id", NewAgeRatings(os.Getenv("TMDB_API_KEY")).handle)
 	registerFrontend(r, cfg.WebDir)
 	return r
 }

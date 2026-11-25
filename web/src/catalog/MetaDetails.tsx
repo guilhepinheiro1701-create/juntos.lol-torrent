@@ -10,6 +10,7 @@ import { Carousel } from './Carousel'
 import { FadeImg } from './FadeImg'
 import { useT } from '../i18n/useT'
 import { fetchMeta, type MetaDetail, type MetaType, type MetaVideo } from './tmdb'
+import { ratingTone, useAgeRating } from './ageRating'
 import { isPlayable, streamKey, type CatalogStream, type StreamResolution, type StreamTarget } from './streams'
 import { resolveStreams } from '../plugins/resolve'
 import type { TitleOpen } from './PosterCard'
@@ -88,6 +89,7 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onPlayDi
   const closingRef = useRef(false)
   const [revealed, setRevealed] = useState(false)
   const [detail, setDetail] = useState<MetaDetail | null>(null)
+  const ageRating = useAgeRating(open.meta.type, detail?.imdbId)
   const [detailFailed, setDetailFailed] = useState(false)
   const [detailRetry, setDetailRetry] = useState(0)
   const [season, setSeason] = useState(() => focus?.season ?? recentFor(open.meta.type, [open.meta.id])?.season ?? 1)
@@ -375,6 +377,19 @@ export function MetaDetails({ open, mode, focus, onClose, onPickStream, onPlayDi
           </button>
           <h2>{detail?.name ?? meta.name}</h2>
           <p className="details-meta-line">
+            {ageRating ? (
+              <span
+                className={`age-rating tone-${ratingTone(ageRating)}`}
+                title={ageRating.system === 'ClassInd'
+                  ? (ageRating.rating === 'L' ? t('details.ageFree') : t('details.ageMin').replace('{age}', ageRating.rating))
+                  : t('details.ageUS').replace('{rating}', ageRating.rating)}
+                aria-label={ageRating.system === 'ClassInd'
+                  ? (ageRating.rating === 'L' ? t('details.ageFree') : t('details.ageMin').replace('{age}', ageRating.rating))
+                  : t('details.ageUS').replace('{rating}', ageRating.rating)}
+              >
+                {ageRating.rating}
+              </span>
+            ) : null}
             {year ? <span>{year}</span> : null}
             {detail?.runtime ? <span>{detail.runtime}</span> : null}
             {detail?.imdbRating ? (

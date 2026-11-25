@@ -285,3 +285,15 @@ docker compose down -v
 
 O `-v` leva os volumes junto: filmes baixados, salas e os segmentos já
 preparados. Sem ele, só os containers somem.
+
+## Classificação indicativa (opcional)
+
+Os detalhes de um filme ou série mostram a classificação indicativa (L, 10, 12, 14, 16, 18).
+Sem configurar nada, ela vem do Wikidata, que tem a da maioria dos filmes e de poucas séries.
+Para ter a de todas as séries também:
+
+1. Crie uma conta grátis em themoviedb.org e peça uma chave em Configurações > API.
+2. No `.env.local`, adicione a linha `TMDB_API_KEY=sua_chave` (serve a "API Key" ou o "Token de leitura").
+3. Rode `start.bat` de novo.
+
+A chave fica só no servidor da sua máquina; o navegador nunca a vê.
